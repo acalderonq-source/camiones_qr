@@ -1,9 +1,9 @@
-// server.js  — Camiones QR (Express/EJS/Multer)
-// - Sin IA
-// - Portada solo por subida de imagen (/admin/cover/upload)
+// server.js — Camiones QR (MySQL + Express/EJS/Multer)
+// - Portada SOLO por subida (no URL) y no aparece en la galería/lista
 // - Permisos con fecha de vencimiento + correo 22 días antes
-// - Galería + edición de imágenes (portada / renombrar / reemplazar / eliminar)
-// - Reportes públicos (queja/recomendación/otro) guardados en data/reports.json + email opcional
+// - Galería (subir/renombrar/reemplazar/eliminar/portada)
+// - Reportes públicos guardados en MySQL + email opcional
+// - QR por placa
 
 import express from 'express';
 import session from 'express-session';
@@ -15,6 +15,7 @@ import QRCode from 'qrcode';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
 import cron from 'node-cron';
+import { pool } from './db.js'; // ← requiere db.js
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -23,7 +24,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
-const ADMIN_PASS = process.env.ADMIN_PASS || 'tomza-1234';
+const ADMIN_PASS = process.env.ADMIN_PASS || 'admin-1234';
 
 // ------------ Middlewares
 app.use(express.urlencoded({ extended: true }));
@@ -40,48 +41,17 @@ app.set('view engine', 'ejs');
 const upload = multer({ storage: multer.memoryStorage() });
 
 // ------------ Email (avisos y reportes)
-const transporter = nodemailer.createTransport({
-  host: process.env.SMTP_HOST,
-  port: Number(process.env.SMTP_PORT || 587),
-  secure: String(process.env.SMTP_SECURE || 'false') === 'true',
-  auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
-});
-
-// ------------ Archivos de datos
-const DATA_DIR = path.join(__dirname, 'data');
-const TRUCKS_PATH = path.join(DATA_DIR, 'trucks.json');
-const REPORTS_PATH = path.join(DATA_DIR, 'reports.json');
-
-fs.mkdirSync(DATA_DIR, { recursive: true });
-if (!fs.existsSync(TRUCKS_PATH)) fs.writeFileSync(TRUCKS_PATH, '[]', 'utf-8');
-if (!fs.existsSync(REPORTS_PATH)) fs.writeFileSync(REPORTS_PATH, '[]', 'utf-8');
-
-function loadTrucks() { try { return JSON.parse(fs.readFileSync(TRUCKS_PATH, 'utf-8')); } catch { return []; } }
-function saveTrucks(list) { fs.writeFileSync(TRUCKS_PATH, JSON.stringify(list, null, 2), 'utf-8'); }
-function loadReports() { try { return JSON.parse(fs.readFileSync(REPORTS_PATH, 'utf-8')); } catch { return []; } }
-function saveReports(list) { fs.writeFileSync(REPORTS_PATH, JSON.stringify(list, null, 2), 'utf-8'); }
-
-function getTruck(placa) {
-  const list = loadTrucks();
-  return list.find(t => (t.placa || '').toLowerCase() === String(placa || '').toLowerCase());
-}
-function upsertTruck(data) {
-  const list = loadTrucks();
-  const i = list.findIndex(t => (t.placa || '').toLowerCase() === String(data.placa || '').toLowerCase());
-  if (i >= 0) list[i] = data; else list.push(data);
-  saveTrucks(list);
-}
-function fotosSinPortada(fotos, portadaUrl){
-  if (!portadaUrl) return fotos;
-  const cover = (portadaUrl || '').toLowerCase();
-  const coverName = cover.split('/').pop();
-  return (fotos || []).filter(u => {
-    const ul = (u || '').toLowerCase();
-    const name = ul.split('/').pop();
-    return ul !== cover && name !== coverName;
+let transporter = null;
+if (process.env.SMTP_HOST) {
+  transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT || 587),
+    secure: String(process.env.SMTP_SECURE || 'false') === 'true',
+    auth: process.env.SMTP_USER ? { user: process.env.SMTP_USER, pass: process.env.SMTP_PASS } : undefined
   });
 }
 
+// ------------ Helpers de archivos (galería)
 function ensureFolder(folderPath) { fs.mkdirSync(folderPath, { recursive: true }); }
 const ALLOWED_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 function getUploadDir(placa) {
@@ -97,65 +67,116 @@ function sanitizeName(name) {
 function listPhotos(placa) {
   const dir = getUploadDir(placa);
   const relRoot = `/uploads/${String(placa).toUpperCase()}`;
+  if (!fs.existsSync(dir)) return [];
   return fs.readdirSync(dir)
     .filter(f => ALLOWED_EXTS.has(path.extname(f).toLowerCase()))
     .map(f => `${relRoot}/${f}`);
+}
+// Ocultar portada de la galería/lista
+function fotosSinPortada(fotos, portadaUrl){
+  if (!portadaUrl) return fotos;
+  const cover = (portadaUrl || '').toLowerCase();
+  const coverName = cover.split('/').pop();
+  return (fotos || []).filter(u => {
+    const ul = (u || '').toLowerCase();
+    const name = ul.split('/').pop();
+    return ul !== cover && name !== coverName;
+  });
 }
 
 function setToast(req, type, msg) { req.session.toast = { type, msg }; }
 function popToast(req) { const t = req.session.toast; req.session.toast = null; return t; }
 function requireAdmin(req, res, next) { if (req.session && req.session.admin) return next(); return res.redirect('/admin/login'); }
 
-// ------------ Documentos (permisos)
+// ------------ MySQL helpers (placas, docs, reportes)
+async function getTruck(placa) {
+  const [rows] = await pool.query('SELECT * FROM trucks WHERE placa = ?', [String(placa).toUpperCase()]);
+  const row = rows[0];
+  if (!row) return null;
+  // notas en texto con ; → array (para vista)
+  row.notas = row.notas ? row.notas.split(';').map(s => s.trim()).filter(Boolean) : [];
+  return row;
+}
+async function upsertTruck(data) {
+  const notasText = Array.isArray(data.notas) ? data.notas.join(';') : (data.notas || '');
+  await pool.query(
+    `INSERT INTO trucks (placa, unidad, cedis, marca, modelo, anio, vin, telefono_quejas, foto, notas)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       unidad=VALUES(unidad), cedis=VALUES(cedis), marca=VALUES(marca), modelo=VALUES(modelo),
+       anio=VALUES(anio), vin=VALUES(vin), telefono_quejas=VALUES(telefono_quejas),
+       foto=VALUES(foto), notas=VALUES(notas)`,
+    [
+      data.placa, data.unidad || '', data.cedis || '', data.marca || '', data.modelo || '',
+      data.anio || '', data.vin || '', data.telefono_quejas || '', data.foto || '', notasText
+    ]
+  );
+}
+async function getDocsByPlaca(placa) {
+  const [rows] = await pool.query(
+    'SELECT * FROM documents WHERE placa = ? ORDER BY fecha_vencimiento IS NULL, fecha_vencimiento',
+    [String(placa).toUpperCase()]
+  );
+  return rows;
+}
+async function upsertDoc(placa, doc) {
+  const id = doc.id;
+  const fecha = doc.fecha_vencimiento ? new Date(doc.fecha_vencimiento) : null;
+  await pool.query(
+    `INSERT INTO documents (id, placa, categoria, titulo, fecha_vencimiento, url, alert22Sent)
+     VALUES (?, ?, ?, ?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       categoria=VALUES(categoria), titulo=VALUES(titulo),
+       fecha_vencimiento=VALUES(fecha_vencimiento), url=VALUES(url), alert22Sent=VALUES(alert22Sent)`,
+    [id, String(placa).toUpperCase(), doc.categoria, doc.titulo, fecha, doc.url || null, doc.alert22Sent ? 1 : 0]
+  );
+  return true;
+}
+async function deleteDoc(placa, id) {
+  const [res] = await pool.query('DELETE FROM documents WHERE id = ? AND placa = ?', [id, String(placa).toUpperCase()]);
+  return res.affectedRows > 0;
+}
+async function addReport(rep) {
+  await pool.query(
+    `INSERT INTO reports (id, placa, tipo, nombre, telefono, email, mensaje, createdAt)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    [rep.id, rep.placa, rep.tipo, rep.nombre, rep.telefono, rep.email, rep.mensaje, rep.createdAt]
+  );
+}
 function docStatus(dateStr) {
   if (!dateStr) return { estado: 'sin-fecha', dias: null };
   const v = new Date(dateStr);
   if (isNaN(v)) return { estado: 'sin-fecha', dias: null };
-  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const today = new Date(); today.setHours(0,0,0,0);
   const diff = Math.floor((v - today) / (1000 * 60 * 60 * 24));
   if (diff < 0) return { estado: 'vencido', dias: diff };
   if (diff <= 30) return { estado: 'por-vencer', dias: diff };
   return { estado: 'vigente', dias: diff };
 }
-function listAlerts() {
-  const out = [];
-  const all = loadTrucks();
-  for (const t of all) {
-    const docs = Array.isArray(t.documentos) ? t.documentos : [];
-    for (const d of docs) {
-      const st = docStatus(d.fecha_vencimiento);
-      if (st.estado === 'vencido' || st.estado === 'por-vencer') {
-        out.push({ placa: t.placa, ...d, estado: st.estado, dias: st.dias });
-      }
-    }
-  }
-  out.sort((a, b) => {
+async function listAlerts() {
+  const [rows] = await pool.query(
+    `SELECT d.*, t.placa, DATEDIFF(d.fecha_vencimiento, CURDATE()) AS dias
+     FROM documents d
+     JOIN trucks t ON t.placa = d.placa
+     WHERE d.fecha_vencimiento IS NOT NULL
+       AND DATEDIFF(d.fecha_vencimiento, CURDATE()) <= 30`
+  );
+  const out = rows.map(r => ({
+    placa: r.placa,
+    id: r.id,
+    categoria: r.categoria,
+    titulo: r.titulo,
+    fecha_vencimiento: r.fecha_vencimiento ? new Date(r.fecha_vencimiento).toISOString().slice(0,10) : null,
+    url: r.url,
+    estado: (r.dias < 0) ? 'vencido' : 'por-vencer',
+    dias: r.dias
+  }));
+  out.sort((a,b) => {
     const pr = x => x.estado === 'vencido' ? 0 : 1;
     if (pr(a) !== pr(b)) return pr(a) - pr(b);
     return (a.dias || 0) - (b.dias || 0);
   });
   return out;
-}
-function upsertDoc(placa, doc) {
-  const list = loadTrucks();
-  const i = list.findIndex(t => (t.placa || '').toLowerCase() === String(placa || '').toLowerCase());
-  if (i < 0) return false;
-  list[i].documentos = Array.isArray(list[i].documentos) ? list[i].documentos : [];
-  const j = list[i].documentos.findIndex(d => d.id === doc.id);
-  if (j >= 0) list[i].documentos[j] = doc;
-  else list[i].documentos.push(doc);
-  saveTrucks(list);
-  return true;
-}
-function deleteDoc(placa, id) {
-  const list = loadTrucks();
-  const i = list.findIndex(t => (t.placa || '').toLowerCase() === String(placa || '').toLowerCase());
-  if (i < 0) return false;
-  const before = (list[i].documentos || []).length;
-  list[i].documentos = (list[i].documentos || []).filter(d => String(d.id) !== String(id));
-  const after = list[i].documentos.length;
-  saveTrucks(list);
-  return after < before;
 }
 
 // ------------ Rutas públicas
@@ -163,15 +184,30 @@ app.get('/', (req, res) => {
   res.render('index', { toast: popToast(req) });
 });
 
-app.get('/c/:placa', (req, res) => {
+app.get('/c/:placa', async (req, res) => {
   const placa = req.params.placa;
-  const truck = getTruck(placa);
+  const truck = await getTruck(placa);
   let fotos = truck ? listPhotos(truck.placa) : [];
-  fotos = fotosSinPortada(fotos, truck?.foto);
+  fotos = fotosSinPortada(fotos, truck?.foto); // ← ocultar portada en la galería/lista
+
   let docs = [];
   let avisos = [];
   if (truck) {
-    docs = (truck.documentos || []).map(d => ({ ...d, ...docStatus(d.fecha_vencimiento) }));
+    const dbDocs = await getDocsByPlaca(placa);
+    docs = dbDocs.map(d => {
+      const v = d.fecha_vencimiento ? new Date(d.fecha_vencimiento) : null;
+      const today = new Date(); today.setHours(0,0,0,0);
+      let estado = 'sin-fecha', dias = null;
+      if (v && !isNaN(v)) {
+        dias = Math.floor((v - today)/(1000*60*60*24));
+        estado = dias < 0 ? 'vencido' : (dias <= 30 ? 'por-vencer' : 'vigente');
+      }
+      return {
+        ...d,
+        fecha_vencimiento: v ? v.toISOString().slice(0,10) : null,
+        estado, dias
+      };
+    });
     avisos = docs.filter(d => d.estado === 'vencido' || d.estado === 'por-vencer');
   }
   const enviado = req.query.enviado === '1';
@@ -201,23 +237,34 @@ app.post('/admin/login', (req, res) => {
 });
 app.get('/admin/logout', (req, res) => { req.session.destroy(() => res.redirect('/')); });
 
-app.get('/admin/editar', requireAdmin, (req, res) => {
+app.get('/admin/editar', requireAdmin, async (req, res) => {
   const placa = (req.query.placa || '').toString().trim();
   let truck = null, fotos = [], docs = [];
-  const avisos = listAlerts();
+  const avisos = await listAlerts();
   if (placa) {
-    truck = getTruck(placa) || { placa: placa.toUpperCase(), notas: [], documentos: [] };
+    truck = (await getTruck(placa)) || { placa: placa.toUpperCase(), notas: [], documentos: [] };
     fotos = listPhotos(placa);
-    docs = (truck.documentos || []).map(d => ({ ...d, ...docStatus(d.fecha_vencimiento) }));
+    fotos = fotosSinPortada(fotos, truck?.foto); // ocultar portada en admin galería si querés
+    const dbDocs = await getDocsByPlaca(placa);
+    docs = dbDocs.map(d => {
+      const v = d.fecha_vencimiento ? new Date(d.fecha_vencimiento) : null;
+      const today = new Date(); today.setHours(0,0,0,0);
+      let estado = 'sin-fecha', dias = null;
+      if (v && !isNaN(v)) {
+        dias = Math.floor((v - today)/(1000*60*60*24));
+        estado = dias < 0 ? 'vencido' : (dias <= 30 ? 'por-vencer' : 'vigente');
+      }
+      return { ...d, fecha_vencimiento: v ? v.toISOString().slice(0,10) : null, estado, dias };
+    });
   }
   res.render('admin/editar', { placa, truck, fotos, docs, avisos, toast: popToast(req) });
 });
 
-app.post('/admin/editar', requireAdmin, (req, res) => {
+app.post('/admin/editar', requireAdmin, async (req, res) => {
   const b = req.body;
   const placa = String(b.placa || '').trim().toUpperCase();
   if (!placa) { setToast(req, 'err', 'La placa es obligatoria'); return res.redirect('/admin/editar'); }
-  const existing = getTruck(placa) || {};
+  const existing = (await getTruck(placa)) || {};
   const notas = String(b.notas || '').split(';').map(s => s.trim()).filter(Boolean);
 
   const truck = {
@@ -229,12 +276,11 @@ app.post('/admin/editar', requireAdmin, (req, res) => {
     anio: b.anio || '',
     vin: b.vin || '',
     telefono_quejas: b.telefono_quejas || '',
-    // La portada ya NO se toma por texto; se conserva la que exista hasta que la suban
+    // portada NO se toma desde texto; se conserva hasta que la suban/cambien
     foto: existing.foto || '',
-    notas,
-    documentos: existing.documentos || []
+    notas
   };
-  upsertTruck(truck);
+  await upsertTruck(truck);
   setToast(req, 'ok', 'Guardado');
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
@@ -250,7 +296,8 @@ app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req
     let ok = 0, fail = 0;
     for (const f of req.files) {
       try {
-        const ext = path.extname(f.originalname) || '.jpg';
+        const ext = (path.extname(f.originalname) || '.jpg').toLowerCase();
+        if (!ALLOWED_EXTS.has(ext)) { fail++; continue; }
         const base = path.basename(f.originalname, ext).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'img';
         let name = `${base}${ext}`;
         let dest = path.join(dir, name);
@@ -258,7 +305,7 @@ app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req
         while (fs.existsSync(dest)) { name = `${base}-${i}${ext}`; dest = path.join(dir, name); i++; }
         fs.writeFileSync(dest, f.buffer);
         ok++;
-      } catch (e) { fail++; }
+      } catch { fail++; }
     }
     setToast(req, 'ok', `${ok} imagen(es) subida(s)` + (fail ? `, ${fail} fallida(s)` : ''));
     res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
@@ -314,20 +361,20 @@ app.post('/admin/photo/replace', requireAdmin, upload.single('nuevo'), (req, res
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-app.post('/admin/photo/cover', requireAdmin, (req, res) => {
+app.post('/admin/photo/cover', requireAdmin, async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const name = sanitizeName(String(req.body.name || '').trim());
   if (!placa || !name) { setToast(req, 'err', 'Falta placa o nombre'); return res.redirect('/admin/editar'); }
-  const truck = getTruck(placa);
+  const truck = (await getTruck(placa));
   if (!truck) { setToast(req, 'err', 'No se encontró la placa'); return res.redirect('/admin/editar'); }
   truck.foto = `/uploads/${placa}/${name}`;
-  upsertTruck(truck);
+  await upsertTruck(truck);
   setToast(req, 'ok', 'Establecida como portada');
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// NUEVO: Subir portada (obligatorio subir, no URL)
-app.post('/admin/cover/upload', requireAdmin, upload.single('portada'), (req,res)=>{
+// Subir portada (obligatorio subir, no URL)
+app.post('/admin/cover/upload', requireAdmin, upload.single('portada'), async (req,res)=>{
   const placa = String(req.body.placa||'').trim().toUpperCase();
   if (!placa){ setToast(req,'err','Falta placa'); return res.redirect('/admin/editar'); }
   if (!req.file){ setToast(req,'err','Adjunta una imagen'); return res.redirect('/admin/editar?placa='+encodeURIComponent(placa)); }
@@ -342,16 +389,16 @@ app.post('/admin/cover/upload', requireAdmin, upload.single('portada'), (req,res
   while (fs.existsSync(dest)){ name = `${base}-${i}${ext}`; dest = path.join(dir, name); i++; }
   fs.writeFileSync(dest, req.file.buffer);
 
-  const truck = getTruck(placa) || { placa, notas: [], documentos: [] };
+  const truck = (await getTruck(placa)) || { placa, notas: [] };
   truck.foto = `/uploads/${placa}/${name}`;
-  upsertTruck(truck);
+  await upsertTruck(truck);
 
   setToast(req,'ok','Portada actualizada');
   return res.redirect('/admin/editar?placa='+encodeURIComponent(placa));
 });
 
 // CRUD documentos manual
-app.post('/admin/doc/add', requireAdmin, (req, res) => {
+app.post('/admin/doc/add', requireAdmin, async (req, res) => {
   const b = req.body;
   const placa = String(b.placa || '').trim().toUpperCase();
   if (!placa) { setToast(req, 'err', 'Falta placa'); return res.redirect('/admin/editar'); }
@@ -364,21 +411,21 @@ app.post('/admin/doc/add', requireAdmin, (req, res) => {
     return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
   }
   const doc = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), categoria, titulo, fecha_vencimiento, url, alert22Sent: false };
-  const ok = upsertDoc(placa, doc);
-  setToast(req, ok ? 'ok' : 'err', ok ? 'Documento agregado' : 'No se encontró la placa');
+  await upsertDoc(placa, doc);
+  setToast(req, 'ok', 'Documento agregado');
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
-app.post('/admin/doc/delete', requireAdmin, (req, res) => {
+app.post('/admin/doc/delete', requireAdmin, async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const id = (req.body.id || '').trim();
   if (!placa || !id) { setToast(req, 'err', 'Falta placa o id'); return res.redirect('/admin/editar'); }
-  const ok = deleteDoc(placa, id);
+  const ok = await deleteDoc(placa, id);
   setToast(req, ok ? 'ok' : 'err', ok ? 'Documento eliminado' : 'No encontrado');
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// Subir imagen de documento (sin IA) y asociarla
-app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), (req, res) => {
+// Subir imagen de documento y asociarla
+app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const categoria = (req.body.categoria || '').trim() || 'DOC';
   const titulo = (req.body.titulo || '').trim() || 'Documento';
@@ -388,7 +435,8 @@ app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), (req, res)
   if (!fecha_vencimiento) { setToast(req, 'err', 'Ingresá la fecha de vencimiento'); return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa)); }
 
   const dir = getUploadDir(placa);
-  const ext = path.extname(req.file.originalname) || '.jpg';
+  const ext = (path.extname(req.file.originalname) || '.jpg').toLowerCase();
+  if (!ALLOWED_EXTS.has(ext)) { setToast(req,'err','Extensión no permitida'); return res.redirect('/admin/editar?placa='+encodeURIComponent(placa)); }
   const base = path.basename(req.file.originalname, ext).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'doc';
   let name = `${base}${ext}`;
   let dest = path.join(dir, name);
@@ -398,8 +446,8 @@ app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), (req, res)
   const urlRel = `/uploads/${placa}/${name}`;
 
   const doc = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), categoria, titulo, fecha_vencimiento, url: urlRel, alert22Sent: false };
-  const ok = upsertDoc(placa, doc);
-  setToast(req, ok ? 'ok' : 'err', ok ? 'Documento creado con imagen' : 'No se encontró la placa');
+  await upsertDoc(placa, doc);
+  setToast(req, 'ok', 'Documento creado con imagen');
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
@@ -426,9 +474,7 @@ app.post('/c/:placa/report', async (req, res) => {
     placa, tipo, nombre, telefono, email, mensaje,
     createdAt: new Date().toISOString()
   };
-  const list = loadReports();
-  list.push(rep);
-  saveReports(list);
+  await addReport(rep);
 
   try {
     if (process.env.ALERT_EMAIL_TO && transporter) {
@@ -453,37 +499,43 @@ app.post('/c/:placa/report', async (req, res) => {
 });
 
 // API avisos (json)
-app.get('/api/avisos', requireAdmin, (req, res) => res.json(listAlerts()));
+app.get('/api/avisos', requireAdmin, async (req, res) => res.json(await listAlerts()));
 
 // ------------ CRON: mail 22 días antes
-cron.schedule('0 9 * * *', async () => {
-  try {
-    const trucks = loadTrucks();
-    const avisos = [];
-    for (const t of trucks) {
-      const docs = Array.isArray(t.documentos) ? t.documentos : [];
-      for (const d of docs) {
-        const st = docStatus(d.fecha_vencimiento);
-        if (st.estado === 'por-vencer' && st.dias === 22 && !d.alert22Sent) {
-          avisos.push({ placa: t.placa, ...d });
-          d.alert22Sent = true;
+if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
+  cron.schedule('0 9 * * *', async () => {
+    try {
+      const [rows] = await pool.query(
+        `SELECT d.*, t.placa
+         FROM documents d
+         JOIN trucks t ON t.placa = d.placa
+         WHERE d.fecha_vencimiento IS NOT NULL
+           AND DATEDIFF(d.fecha_vencimiento, CURDATE()) = 22
+           AND d.alert22Sent = 0`
+      );
+
+      if (rows.length && transporter && process.env.ALERT_EMAIL_TO) {
+        const listHtml = rows.map(a =>
+          `<li><b>${a.placa}</b> — ${a.categoria}: ${a.titulo}<br/>Vence: <b>${new Date(a.fecha_vencimiento).toISOString().slice(0,10)}</b></li>`
+        ).join('');
+
+        await transporter.sendMail({
+          from: process.env.SMTP_FROM || process.env.SMTP_USER,
+          to: process.env.ALERT_EMAIL_TO,
+          subject: `Avisos de vencimiento (22 días) — ${new Date().toLocaleDateString()}`,
+          html: `<p>Documentos por vencer en 22 días:</p><ul>${listHtml}</ul>`
+        });
+
+        const ids = rows.map(r => r.id);
+        if (ids.length) {
+          await pool.query(`UPDATE documents SET alert22Sent = 1 WHERE id IN (${ids.map(()=>'?').join(',')})`, ids);
         }
       }
+    } catch (e) {
+      console.error('Cron error:', e.message);
     }
-    if (avisos.length && transporter) {
-      const listHtml = avisos.map(a => `<li><b>${a.placa}</b> — ${a.categoria}: ${a.titulo}<br/>Vence: <b>${a.fecha_vencimiento || '(sin fecha)'}</b></li>`).join('');
-      await transporter.sendMail({
-        from: process.env.SMTP_FROM || process.env.SMTP_USER,
-        to: process.env.ALERT_EMAIL_TO,
-        subject: `Avisos de vencimiento (22 días) — ${new Date().toLocaleDateString()}`,
-        html: `<p>Documentos por vencer en 22 días:</p><ul>${listHtml}</ul>`
-      });
-      saveTrucks(trucks); // persiste alert22Sent
-    }
-  } catch (e) {
-    console.error('Cron error:', e.message);
-  }
-}, { timezone: process.env.TZ || 'America/Costa_Rica' });
+  }, { timezone: process.env.TZ || 'America/Costa_Rica' });
+}
 
 // ------------ Start
 app.listen(PORT, () => {
