@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Admin - Editar</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+  <main class="wrap">
+    <div class="header">
+      <h2 style="margin:0">Admin - Camiones</h2>
+      <div><a class="btn" href="/admin/logout">Salir</a></div>
+    </div>
+
+    <% if (toast) { %>
+      <p class="<%= toast.type==='ok' ? 'toast-ok' : 'toast-err' %>"><%= toast.msg %></p>
+    <% } %>
+
+    <% if (typeof avisos !== 'undefined' && avisos && avisos.length) { %>
+      <div class="alert warn">
+        <strong>Alertas:</strong> <%= avisos.length %> documento(s) por vencer o vencidos en las próximas 4 semanas.
+      </div>
+    <% } %>
+
+    <!-- Cargar / crear placa -->
+    <section class="card">
+      <form method="get" action="/admin/editar">
+        <label>Placa
+          <input name="placa" value="<%= (truck && truck.placa) || placa || '' %>" placeholder="Ej: C123" required />
+        </label>
+        <button class="btn" type="submit">Cargar / Nuevo</button>
+      </form>
+    </section>
+
+    <% if (truck) { %>
+
+    <!-- Datos del camión + miniatura de portada -->
+    <section class="card">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+        <h3 style="margin:0">Datos del camión <%= truck.placa %></h3>
+        <% if (truck.foto) { %>
+          <div style="text-align:right">
+            <div class="muted" style="font-size:.8rem;margin-bottom:4px">Portada actual</div>
+            <img src="<%= truck.foto %>" alt="Portada" style="max-width:120px;max-height:80px;object-fit:cover;border:1px solid #20304d;border-radius:6px" />
+          </div>
+        <% } %>
+      </div>
+
+      <form method="post" action="/admin/editar" style="margin-top:12px">
+        <input type="hidden" name="placa" value="<%= truck.placa %>" />
+        <div class="grid">
+          <label>Unidad <input name="unidad" value="<%= truck.unidad || '' %>"/></label>
+          <label>CEDIS <input name="cedis" value="<%= truck.cedis || '' %>"/></label>
+          <label>Marca <input name="marca" value="<%= truck.marca || '' %>"/></label>
+          <label>Modelo <input name="modelo" value="<%= truck.modelo || '' %>"/></label>
+          <label>Año   <input name="anio" value="<%= truck.anio || '' %>"/></label>
+          <label>VIN   <input name="vin" value="<%= truck.vin || '' %>"/></label>
+          <label>Tel quejas <input name="telefono_quejas" value="<%= truck.telefono_quejas || '' %>"/></label>
+        </div>
+        <label>Notas (separadas por ;)
+          <input name="notas" value="<%= (truck.notas||[]).join(';') %>" />
+        </label>
+        <button class="btn" type="submit">Guardar</button>
+        <a class="btn" style="margin-left:8px;background:#333" target="_blank" href="/c/<%= encodeURIComponent(truck.placa) %>">Ver ficha pública</a>
+      </form>
+    </section>
+
+    <!-- Permisos / Documentos -->
+    <section class="card">
+      <h3 style="margin-top:0">Permisos / Documentos</h3>
+
+      <!-- Alta manual -->
+      <form method="post" action="/admin/doc/add">
+        <input type="hidden" name="placa" value="<%= truck.placa %>" />
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+          <label>Categoría
+            <input name="categoria" placeholder="RTV / Marchamo / Póliza / Dekra" required />
+          </label>
+          <label>Título
+            <input name="titulo" placeholder="RTV 2026" required />
+          </label>
+          <label>Fecha de vencimiento
+            <input type="date" name="fecha_vencimiento" required />
+          </label>
+          <label>URL de imagen (opcional)
+            <input name="url" placeholder="/uploads/PLACA/archivo.jpg o https://..." />
+          </label>
+        </div>
+        <button class="btn" type="submit" style="margin-top:8px">Agregar</button>
+      </form>
+
+      <!-- Subir imagen del documento y asociar -->
+      <hr/>
+      <h4>Subir imagen del documento</h4>
+      <form method="post" enctype="multipart/form-data" action="/admin/doc/upload">
+        <input type="hidden" name="placa" value="<%= truck.placa %>" />
+        <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px">
+          <label>Categoría
+            <input name="categoria" placeholder="RTV / Marchamo / Póliza" required />
+          </label>
+          <label>Título
+            <input name="titulo" placeholder="RTV 2026" required />
+          </label>
+          <label>Fecha de vencimiento
+            <input type="date" name="fecha_vencimiento" required />
+          </label>
+          <label>Archivo (imagen)
+            <input type="file" name="archivo" accept="image/*" required />
+          </label>
+        </div>
+        <button class="btn" type="submit" style="margin-top:8px">Subir y asociar</button>
+      </form>
+
+      <% if (docs && docs.length) { %>
+      <div style="overflow:auto;margin-top:12px">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Categoría</th>
+              <th>Título</th>
+              <th>Vence</th>
+              <th>Estado</th>
+              <th>Archivo</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody>
+            <% for (var i=0; i<docs.length; i++) { 
+                 var d = docs[i]; %>
+              <tr>
+                <td><%= d.categoria %></td>
+                <td><%= d.titulo %></td>
+                <td><%= d.fecha_vencimiento || '-' %></td>
+                <td>
+                  <% if (d.estado==='vencido') { %><span class="badge danger">Vencido</span>
+                  <% } else if (d.estado==='por-vencer') { %><span class="badge warn">Por vencer (<%= d.dias %> días)</span>
+                  <% } else if (d.estado==='vigente') { %><span class="badge ok">Vigente</span>
+                  <% } else { %><span class="badge">Sin fecha</span><% } %>
+                </td>
+                <td>
+                  <% if (d.url) { %>
+                    <a href="<%= d.url %>" target="_blank">Ver</a><br/>
+                    <img src="<%= d.url %>" alt="doc" style="max-width:100px;max-height:70px;object-fit:cover;border:1px solid #20304d;border-radius:6px;margin-top:4px"/>
+                  <% } else { %>
+                    <span class="muted">—</span>
+                  <% } %>
+                </td>
+                <td>
+                  <form method="post" action="/admin/doc/delete" onsubmit="return confirm('¿Eliminar documento?')">
+                    <input type="hidden" name="placa" value="<%= truck.placa %>"/>
+                    <input type="hidden" name="id" value="<%= d.id %>"/>
+                    <button class="btn" style="background:#aa3333">Eliminar</button>
+                  </form>
+                </td>
+              </tr>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+      <% } else { %>
+        <p class="muted" style="margin-top:8px">Aún no hay documentos.</p>
+      <% } %>
+    </section>
+
+    <!-- Galería de fotos -->
+    <section class="card">
+      <h3 style="margin-top:0">Fotos de la unidad</h3>
+      <form method="post" enctype="multipart/form-data" action="/admin/upload">
+        <input type="hidden" name="placa" value="<%= truck.placa %>" />
+        <label>Imágenes (podés elegir varias)
+          <input type="file" name="archivos" accept="image/*" multiple required />
+        </label>
+        <button class="btn" type="submit">Subir</button>
+      </form>
+
+      <div class="gallery" style="margin-top:12px">
+        <% for (var i=0; i<fotos.length; i++) {
+             var u = fotos[i];
+             var parts = u.split('/');
+             var name = parts[parts.length - 1];
+        %>
+          <figure class="fig">
+            <img class="responsive" src="<%= u %>" />
+            <figcaption style="font-size:.8rem;word-break:break-all;margin-top:6px"><%= name %></figcaption>
+
+            <div style="display:grid;grid-template-columns:repeat(2,1fr);gap:6px;margin-top:8px">
+              <!-- Portada -->
+              <form method="post" action="/admin/photo/cover">
+                <input type="hidden" name="placa" value="<%= truck.placa %>"/>
+                <input type="hidden" name="name" value="<%= name %>"/>
+                <button class="btn" type="submit">Portada</button>
+              </form>
+
+              <!-- Eliminar -->
+              <form method="post" action="/admin/photo/delete" onsubmit="return confirm('¿Eliminar imagen?')">
+                <input type="hidden" name="placa" value="<%= truck.placa %>"/>
+                <input type="hidden" name="name" value="<%= name %>"/>
+                <button class="btn" type="submit" style="background:#aa3333">Eliminar</button>
+              </form>
+            </div>
+
+            <!-- Renombrar -->
+            <form method="post" action="/admin/photo/rename" style="margin-top:6px">
+              <input type="hidden" name="placa" value="<%= truck.placa %>"/>
+              <input type="hidden" name="name" value="<%= name %>"/>
+              <div style="display:grid;grid-template-columns:2fr 1fr;gap:6px">
+                <input name="newName" placeholder="nuevo-nombre.jpg" />
+                <button class="btn" type="submit">Renombrar</button>
+              </div>
+            </form>
+
+            <!-- Reemplazar (misma ruta/nombre) -->
+            <form method="post" enctype="multipart/form-data" action="/admin/photo/replace" style="margin-top:6px">
+              <input type="hidden" name="placa" value="<%= truck.placa %>"/>
+              <input type="hidden" name="name" value="<%= name %>"/>
+              <div style="display:grid;grid-template-columns:2fr 1fr;gap:6px">
+                <input type="file" name="nuevo" accept="image/*" required />
+                <button class="btn" type="submit">Reemplazar</button>
+              </div>
+            </form>
+          </figure>
+        <% } %>
+      </div>
+    </section>
+
+    <!-- *** ÚLTIMO: Subida de portada (formulario al final) *** -->
+    <section class="card">
+      <h3 style="margin-top:0">Actualizar foto de portada</h3>
+      <% if (truck.foto) { %>
+        <p class="muted">Portada actual (miniatura):</p>
+        <img src="<%= truck.foto %>" alt="Portada" style="max-width:120px;max-height:80px;object-fit:cover;border:1px solid #20304d;border-radius:6px" />
+      <% } else { %>
+        <p class="muted">Aún no hay portada para esta placa.</p>
+      <% } %>
+
+      <form method="post" enctype="multipart/form-data" action="/admin/cover/upload" style="margin-top:8px">
+        <input type="hidden" name="placa" value="<%= truck.placa %>" />
+        <label>Subir nueva portada
+          <input type="file" name="portada" accept="image/*" required />
+        </label>
+        <button class="btn" type="submit">Subir portada</button>
+      </form>
+
+      <p class="muted" style="margin-top:6px">
+        También podés marcar cualquier imagen de la galería como <b>Portada</b>.
+      </p>
+    </section>
+
+    <% } %>
+  </main>
+</body>
+</html>

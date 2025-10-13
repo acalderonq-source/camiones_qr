@@ -1,0 +1,32 @@
+[
+  {
+    "placa": "S36612",
+    "unidad": "S36612",
+    "cedis": "TRANSPORTADORA",
+    "marca": "",
+    "modelo": "",
+    "anio": "2025",
+    "vin": "",
+    "telefono_quejas": "",
+    "foto": "/uploads/S36612/Imagen_de_WhatsApp_2025-10-03_a_las_15.07.28_6c5676a0.jpg",
+    "notas": [],
+    "documentos": [
+      {
+        "id": "mgbcxii9u87c",
+        "categoria": "Dekra",
+        "titulo": "Dekra",
+        "fecha_vencimiento": "2026-02-26",
+        "url": "",
+        "alert22Sent": false
+      },
+      {
+        "id": "mgbcy10lnzpp",
+        "categoria": "Dekra",
+        "titulo": "Dekra",
+        "fecha_vencimiento": "2026-02-26",
+        "url": "/uploads/S36612/Imagen_de_WhatsApp_2025-10-03_a_las_07.28.55_95a06d54.jpg",
+        "alert22Sent": false
+      }
+    ]
+  }
+]

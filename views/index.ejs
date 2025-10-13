@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Camiones QR</title>
+  <link rel="stylesheet" href="/styles.css"/>
+</head>
+<body>
+  <main class="wrap">
+    <div class="header">
+      <h2 style="margin:0">Camiones QR</h2>
+      <div>
+        <a class="btn" href="/admin/login">Admin</a>
+      </div>
+    </div>
+
+    <% if (toast) { %>
+      <p class="<%= toast.type==='ok' ? 'toast-ok' : 'toast-err' %>"><%= toast.msg %></p>
+    <% } %>
+
+    <section class="card">
+      <h3 style="margin-top:0">Consultar placa</h3>
+      <form id="goForm" onsubmit="location.href='/c/'+encodeURIComponent(this.placa.value.trim()); return false;">
+        <label>Placa
+          <input name="placa" id="placaInput" placeholder="Ej: C123" required autocomplete="off"/>
+        </label>
+        <button class="btn" type="submit">Ver ficha</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h3 style="margin-top:0">QR de la placa</h3>
+      <p class="muted">Ingresa la placa arriba y mira el QR aquí mismo para imprimirlo.</p>
+      <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+        <img id="qrImg" alt="QR" style="width:160px;height:160px;border:1px solid #20304d;border-radius:8px;object-fit:contain" />
+        <div class="muted" id="qrHint">El QR aparecerá cuando escribas la placa.</div>
+      </div>
+    </section>
+
+    <section class="card">
+      <h3 style="margin-top:0">¿Cómo funciona?</h3>
+      <ol>
+        <li>En Admin, crea/carga la <b>placa</b> y sube su <b>portada</b> e <b>imágenes</b>.</li>
+        <li>Agrega los <b>permisos/documentos</b> con su fecha de vencimiento.</li>
+        <li>Imprime el <b>QR</b> de la placa y pégalo en el camión.</li>
+      </ol>
+    </section>
+  </main>
+
+  <script>
+    const input = document.getElementById('placaInput');
+    const qrImg = document.getElementById('qrImg');
+    const hint = document.getElementById('qrHint');
+
+    function updateQR() {
+      const v = (input.value || '').trim();
+      if (!v) {
+        qrImg.removeAttribute('src');
+        hint.textContent = 'El QR aparecerá cuando escribas la placa.';
+        return;
+      }
+      qrImg.src = '/qr/' + encodeURIComponent(v) + '.png';
+      hint.textContent = 'Escanéalo para abrir la ficha pública de ' + v.toUpperCase() + '.';
+    }
+    input && input.addEventListener('input', updateQR);
+  </script>
+</body>
+</html>
