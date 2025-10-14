@@ -1,15 +1,16 @@
-// db.js — pool MySQL con soporte DATABASE_URL o variables sueltas (validación estricta)
+// db.js — Pool MySQL (Railway/Render) con DATABASE_URL o variables sueltas
 import mysql from 'mysql2/promise';
 import url from 'url';
 
 function fromUrl(dbUrl) {
   const u = new url.URL(dbUrl);
-  const hostname = u.hostname;
-  const port = Number(u.port || 3306);
-  const database = (u.pathname || '').replace(/^\//, '');
-  const user = decodeURIComponent(u.username || '');
-  const password = decodeURIComponent(u.password || '');
-  return { host: hostname, port, user, password, database };
+  return {
+    host: u.hostname,
+    port: Number(u.port || 3306),
+    user: decodeURIComponent(u.username || ''),
+    password: decodeURIComponent(u.password || ''),
+    database: (u.pathname || '').replace(/^\//, '')
+  };
 }
 
 let cfg;
