@@ -80,7 +80,10 @@
           <div style="text-align:right">
             <div class="muted" style="font-size:.8rem;margin-bottom:6px">QR de esta ficha</div>
             <!-- Cache-busting para evitar QR viejo (localhost) -->
-            <img src="/qr/<%= encodeURIComponent(truck.placa) %>.png?v=2" alt="QR" style="width:140px;height:140px;border:1px solid #20304d;border-radius:8px;object-fit:contain"/>
+            <!-- Ahora -->
+<img src="/qrimg/<%= encodeURIComponent(truck.placa) %>.png?v=3"
+     alt="QR" style="width:140px;height:140px;border:1px solid #20304d;border-radius:8px;object-fit:contain"/>
+
           </div>
         </div>
       </section>

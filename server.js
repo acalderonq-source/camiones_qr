@@ -1,12 +1,13 @@
 // server.js — Camiones QR (MySQL + Express/EJS/Multer)
-// - QR usa BASE_URL o cabeceras proxy (no localhost) y manda headers no-cache
-// - /debug/base para verificar la URL base en producción
-// - Portada SOLO por subida y NO aparece en la galería/lista
+// - QR en /qrimg (no localhost) + headers no-cache y fallback a BASE_URL o proxy
+// - Redirección /qr → /qrimg (compatibilidad)
+// - /debug/base para inspección
+// - Portada solo por upload y NO aparece en la galería
 // - Documentos con vencimiento + correo 22 días antes (cron)
 // - Galería (subir/renombrar/reemplazar/eliminar/portada)
 // - Reportes públicos + vista /admin/reportes y API /api/reportes
 // - Health check /healthz
-// - Arranque con reintentos a DB y una sola llamada a app.listen
+// - Arranque con reintentos a DB y una sola llamada a listen
 
 import express from 'express';
 import session from 'express-session';
@@ -27,6 +28,7 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin-1234';
 
+// --------------------- App base ---------------------
 app.use(express.urlencoded({ extended: true }));
 app.use(session({
   secret: process.env.SESSION_SECRET || 'secret-session',
@@ -37,7 +39,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
-// Usar el host real detrás de Render/Proxy para armar URLs absolutas
+// Usar host real detrás de Render/Proxy
 app.set('trust proxy', 1);
 function absoluteBase(req) {
   const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
@@ -48,7 +50,7 @@ function absoluteBase(req) {
 // Subidas en memoria (multer)
 const upload = multer({ storage: multer.memoryStorage() });
 
-// Email (avisos y reportes)
+// --------------------- Email (avisos y reportes) ---------------------
 let transporter = null;
 if (process.env.SMTP_HOST) {
   transporter = nodemailer.createTransport({
@@ -59,7 +61,7 @@ if (process.env.SMTP_HOST) {
   });
 }
 
-// Helpers de archivos (galería)
+// --------------------- Helpers de archivos ---------------------
 function ensureFolder(folderPath) { fs.mkdirSync(folderPath, { recursive: true }); }
 const ALLOWED_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 function getUploadDir(placa) {
@@ -80,6 +82,7 @@ function listPhotos(placa) {
     .filter(f => ALLOWED_EXTS.has(path.extname(f).toLowerCase()))
     .map(f => `${relRoot}/${f}`);
 }
+// Ocultar portada en galería/lista
 function fotosSinPortada(fotos, portadaUrl){
   if (!portadaUrl) return fotos;
   const cover = (portadaUrl || '').toLowerCase();
@@ -91,11 +94,12 @@ function fotosSinPortada(fotos, portadaUrl){
   });
 }
 
+// --------------------- Helpers de UI ---------------------
 function setToast(req, type, msg) { req.session.toast = { type, msg }; }
 function popToast(req) { const t = req.session.toast; req.session.toast = null; return t; }
 function requireAdmin(req, res, next) { if (req.session && req.session.admin) return next(); return res.redirect('/admin/login'); }
 
-// MySQL helpers
+// --------------------- MySQL helpers ---------------------
 async function getTruck(placa) {
   const [rows] = await pool.query('SELECT * FROM trucks WHERE placa = ?', [String(placa).toUpperCase()]);
   const row = rows[0];
@@ -175,7 +179,7 @@ async function listAlerts() {
   return out;
 }
 
-// Crear esquema si falta
+// --------------------- Crear esquema si falta ---------------------
 async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS trucks (
@@ -223,7 +227,7 @@ async function ensureSchema() {
   console.log('Schema OK');
 }
 
-// Rutas públicas
+// --------------------- Rutas públicas ---------------------
 app.get('/', (req, res) => {
   res.render('index', { toast: popToast(req) });
 });
@@ -255,15 +259,16 @@ app.get('/c/:placa', async (req, res) => {
   res.render('ficha', { truck, fotos, docs, avisos, enviado, error });
 });
 
-// QR PNG — usa BASE_URL si existe; si no, arma la URL con el host real del request
-app.get('/qr/:placa.png', async (req, res) => {
+// --------------------- QR: nueva ruta /qrimg (NO localhost) ---------------------
+app.get('/qrimg/:placa.png', async (req, res) => {
   try {
     const placa = req.params.placa;
     const base  = process.env.BASE_URL || absoluteBase(req);
     const url   = `${base}/c/${encodeURIComponent(placa)}`;
+
     const buf   = await QRCode.toBuffer(url, { type: 'png', width: 320, margin: 1 });
 
-    // Headers para evitar caché de QR viejo (localhost)
+    // Evitar caché de QR viejos
     res.setHeader('Content-Type', 'image/png');
     res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
     res.setHeader('Pragma', 'no-cache');
@@ -275,7 +280,12 @@ app.get('/qr/:placa.png', async (req, res) => {
   }
 });
 
-// Ruta de diagnóstico para revisar base URL en producción
+// Compatibilidad: /qr → /qrimg
+app.get('/qr/:placa.png', (req, res) => {
+  return res.redirect(302, `/qrimg/${encodeURIComponent(req.params.placa)}.png`);
+});
+
+// Diagnóstico de base
 app.get('/debug/base', (req, res) => {
   const auto = absoluteBase(req);
   res.json({
@@ -285,7 +295,7 @@ app.get('/debug/base', (req, res) => {
   });
 });
 
-// Admin (login)
+// --------------------- Admin (login/logout) ---------------------
 app.get('/admin/login', (req, res) => res.render('admin/login', { toast: popToast(req) }));
 app.post('/admin/login', (req, res) => {
   const pass = (req.body.pass || '').trim();
@@ -294,7 +304,7 @@ app.post('/admin/login', (req, res) => {
 });
 app.get('/admin/logout', (req, res) => { req.session.destroy(() => res.redirect('/')); });
 
-// Admin (editor)
+// --------------------- Admin (editor) ---------------------
 app.get('/admin/editar', requireAdmin, async (req, res) => {
   const placa = (req.query.placa || '').toString().trim();
   let truck = null, fotos = [], docs = [], avisos = [];
@@ -347,7 +357,7 @@ app.post('/admin/editar', requireAdmin, async (req, res) => {
     anio: b.anio || '',
     vin: b.vin || '',
     telefono_quejas: b.telefono_quejas || '',
-    foto: existing.foto || '', // portada se maneja por upload, no texto
+    foto: existing.foto || '', // portada por upload, no texto
     notas
   };
   await upsertTruck(truck);
@@ -355,7 +365,7 @@ app.post('/admin/editar', requireAdmin, async (req, res) => {
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// Admin (galería)
+// --------------------- Admin (galería) ---------------------
 app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req, res) => {
   try {
     const placa = String(req.body.placa || '').trim().toUpperCase();
@@ -466,7 +476,7 @@ app.post('/admin/cover/upload', requireAdmin, upload.single('portada'), async (r
   return res.redirect('/admin/editar?placa='+encodeURIComponent(placa));
 });
 
-// Documentos
+// --------------------- Documentos ---------------------
 app.post('/admin/doc/add', requireAdmin, async (req, res) => {
   const b = req.body;
   const placa = String(b.placa || '').trim().toUpperCase();
@@ -484,6 +494,7 @@ app.post('/admin/doc/add', requireAdmin, async (req, res) => {
   setToast(req, 'ok', 'Documento agregado');
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
+
 app.post('/admin/doc/delete', requireAdmin, async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const id = (req.body.id || '').trim();
@@ -520,7 +531,7 @@ app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), async (req
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// Reporte público (form al final de la ficha)
+// --------------------- Reporte público ---------------------
 app.post('/c/:placa/report', async (req, res) => {
   const placa = String(req.params.placa || '').toUpperCase();
 
@@ -567,7 +578,7 @@ app.post('/c/:placa/report', async (req, res) => {
   return res.redirect(`/c/${encodeURIComponent(placa)}?enviado=1`);
 });
 
-// Reportes/quejas (API y vista)
+// --------------------- Reportes/quejas (API y vista) ---------------------
 app.get('/api/reportes', requireAdmin, async (req, res) => {
   try {
     const placa = (req.query.placa || '').trim().toUpperCase();
@@ -598,10 +609,10 @@ app.get('/admin/reportes', requireAdmin, async (req, res) => {
   }
 });
 
-// Health check
+// --------------------- Health check ---------------------
 app.get('/healthz', (req, res) => res.status(200).send('OK'));
 
-// CRON: mail 22 días antes (desactivable con DISABLE_CRON=true)
+// --------------------- CRON: mail 22 días antes ---------------------
 if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
   cron.schedule('0 9 * * *', async () => {
     try {
@@ -637,7 +648,7 @@ if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
   }, { timezone: process.env.TZ || 'America/Costa_Rica' });
 }
 
-// Arranque seguro
+// --------------------- Arranque seguro ---------------------
 async function waitForDb(maxRetries = 10, delayMs = 2000) {
   for (let i = 1; i <= maxRetries; i++) {
     try {
@@ -674,6 +685,6 @@ function startServer() {
     startServer();
   } catch (e) {
     console.error('Fallo al iniciar:', e);
-    // No salgas; deja corriendo para poder ver /healthz
+    // no salgas; deja corriendo para poder ver /healthz
   }
 })();
