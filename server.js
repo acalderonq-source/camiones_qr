@@ -1,9 +1,11 @@
 // server.js — Camiones QR (MySQL + Express/EJS/Multer)
-// - Portada SOLO por subida (no URL) y no aparece en la galería/lista
-// - Permisos con fecha de vencimiento + correo 22 días antes
+// - Portada SOLO por subida (no URL) y NO aparece en la galería/lista
+// - Permisos con fecha de vencimiento + correo 22 días antes (cron)
 // - Galería (subir/renombrar/reemplazar/eliminar/portada)
 // - Reportes públicos guardados en MySQL + email opcional
 // - QR por placa
+// - Health check /healthz y arranque con reintentos a DB
+// - Una sola llamada a app.listen (evita EADDRINUSE)
 
 import express from 'express';
 import session from 'express-session';
@@ -15,15 +17,14 @@ import QRCode from 'qrcode';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
 import cron from 'node-cron';
-import { pool } from './db.js'; // ← requiere db.js
+import { pool } from './db.js'; // ← requiere db.js (mysql2/promise)
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const PORT = process.env.PORT || 3000;
-const BASE_URL = process.env.BASE_URL || `http://localhost:${PORT}`;
+const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin-1234';
 
 // ------------ Middlewares
@@ -93,7 +94,6 @@ async function getTruck(placa) {
   const [rows] = await pool.query('SELECT * FROM trucks WHERE placa = ?', [String(placa).toUpperCase()]);
   const row = rows[0];
   if (!row) return null;
-  // notas en texto con ; → array (para vista)
   row.notas = row.notas ? row.notas.split(';').map(s => s.trim()).filter(Boolean) : [];
   return row;
 }
@@ -188,7 +188,7 @@ app.get('/c/:placa', async (req, res) => {
   const placa = req.params.placa;
   const truck = await getTruck(placa);
   let fotos = truck ? listPhotos(truck.placa) : [];
-  fotos = fotosSinPortada(fotos, truck?.foto); // ← ocultar portada en la galería/lista
+  fotos = fotosSinPortada(fotos, truck?.foto); // ocultar portada en la galería/lista
 
   let docs = [];
   let avisos = [];
@@ -244,7 +244,7 @@ app.get('/admin/editar', requireAdmin, async (req, res) => {
   if (placa) {
     truck = (await getTruck(placa)) || { placa: placa.toUpperCase(), notas: [], documentos: [] };
     fotos = listPhotos(placa);
-    fotos = fotosSinPortada(fotos, truck?.foto); // ocultar portada en admin galería si querés
+    fotos = fotosSinPortada(fotos, truck?.foto); // ocultar portada también en admin si querés
     const dbDocs = await getDocsByPlaca(placa);
     docs = dbDocs.map(d => {
       const v = d.fecha_vencimiento ? new Date(d.fecha_vencimiento) : null;
@@ -501,7 +501,10 @@ app.post('/c/:placa/report', async (req, res) => {
 // API avisos (json)
 app.get('/api/avisos', requireAdmin, async (req, res) => res.json(await listAlerts()));
 
-// ------------ CRON: mail 22 días antes
+// ------------ Health check simple para Render (no toca DB)
+app.get('/healthz', (req, res) => res.status(200).send('OK'));
+
+// ------------ CRON: mail 22 días antes (desactivable con DISABLE_CRON=true)
 if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
   cron.schedule('0 9 * * *', async () => {
     try {
@@ -536,15 +539,8 @@ if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
     }
   }, { timezone: process.env.TZ || 'America/Costa_Rica' });
 }
-app.get('/health', async (req, res) => {
-  try {
-    // Si usas MySQL:
-    const [rows] = await pool.query('SELECT 1 AS ok');
-    res.status(200).json({ ok: true, db: rows?.[0]?.ok === 1 });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
-});
+
+// ------------ Arranque seguro: espera DB y escucha UNA sola vez
 async function waitForDb(maxRetries = 10, delayMs = 2000) {
   for (let i = 1; i <= maxRetries; i++) {
     try {
@@ -558,22 +554,25 @@ async function waitForDb(maxRetries = 10, delayMs = 2000) {
     }
     await new Promise(r => setTimeout(r, delayMs));
   }
-  console.warn('DB no disponible, arrancando igual (las rutas que usan DB fallarán hasta que conecte).');
+  console.warn('DB no disponible, arrancando igual.');
 }
 
-// Arranque seguro sin top-level await
+let serverStarted = false;
+function startServer() {
+  if (serverStarted) return; // evita doble arranque
+  serverStarted = true;
+  const PORT = process.env.PORT || 3000; // en Render será 10000
+  app.listen(PORT, () => {
+    console.log(`Servidor en ${process.env.BASE_URL || 'http://localhost:'+PORT}`);
+  });
+}
+
 (async () => {
   try {
-    await waitForDb(); // no bloquea para siempre
-    const PORT = process.env.PORT || 3000;
-    app.listen(PORT, () => console.log(`Servidor en ${process.env.BASE_URL || 'http://localhost:'+PORT}`));
+    await waitForDb();
+    startServer();
   } catch (e) {
     console.error('Fallo al iniciar:', e);
     process.exit(1);
   }
 })();
-
-// ------------ Start
-app.listen(PORT, () => {
-  console.log(`Servidor en ${BASE_URL}`);
-});
