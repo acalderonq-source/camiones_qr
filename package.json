@@ -1,22 +1,28 @@
 {
   "name": "camiones-qr-node",
   "version": "1.0.0",
-  "description": "QR por camión: ficha pública con galería + admin para subir fotos (Node/Express/EJS/Multer)",
+  "description": "QR por camión: ficha pública con galería + admin para subir fotos (Node/Express/EJS/Multer/MySQL).",
+  "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node server.js"
+    "dev": "nodemon server.js"
   },
   "dependencies": {
-    "dayjs": "^1.11.13",
     "dotenv": "^16.6.1",
     "ejs": "^3.1.10",
     "express": "^4.21.2",
     "express-session": "^1.18.2",
     "multer": "^1.4.5-lts.1",
-    "mysql2": "^3.15.2",
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.6",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "mysql2": "^3.11.3"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.7"
+  },
+  "engines": {
+    "node": ">=20"
   }
 }

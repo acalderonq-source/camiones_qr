@@ -2,9 +2,10 @@
 // - Portada SOLO por subida (no URL) y NO aparece en la galería/lista
 // - Documentos con fecha de vencimiento + correo 22 días antes (cron)
 // - Galería (subir/renombrar/reemplazar/eliminar/portada)
-// - Reportes públicos
+// - Reportes públicos + vista /admin/reportes y API /api/reportes
 // - Health check /healthz y arranque con reintentos a DB
 // - Una sola llamada a app.listen (evita EADDRINUSE)
+// - QR genera URL pública (no localhost) usando BASE_URL o cabeceras proxy
 
 import express from 'express';
 import session from 'express-session';
@@ -36,6 +37,14 @@ app.use(session({
 app.use(express.static(path.join(__dirname, 'public')));
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
+
+// --- usar el host real detrás de Render/Proxy ---
+app.set('trust proxy', 1);
+function absoluteBase(req) {
+  const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
+  const host  = req.headers['x-forwarded-host'] || req.headers.host;
+  return `${proto}://${host}`;
+}
 
 // Subidas en memoria (multer)
 const upload = multer({ storage: multer.memoryStorage() });
@@ -262,12 +271,13 @@ app.get('/c/:placa', async (req, res) => {
   res.render('ficha', { truck, fotos, docs, avisos, enviado, error });
 });
 
-// QR PNG
+// QR PNG (usa BASE_URL si existe; si no, arma la URL con el host real del request)
 app.get('/qr/:placa.png', async (req, res) => {
   try {
     const placa = req.params.placa;
-    const url = `${BASE_URL}/c/${encodeURIComponent(placa)}`;
-    const buf = await QRCode.toBuffer(url, { type: 'png', width: 320, margin: 1 });
+    const base  = process.env.BASE_URL || absoluteBase(req); // <— clave
+    const url   = `${base}/c/${encodeURIComponent(placa)}`;
+    const buf   = await QRCode.toBuffer(url, { type: 'png', width: 320, margin: 1 });
     res.setHeader('Content-Type', 'image/png');
     res.send(buf);
   } catch (err) {
@@ -275,7 +285,7 @@ app.get('/qr/:placa.png', async (req, res) => {
   }
 });
 
-// ------------ Admin
+// ------------ Admin (login)
 app.get('/admin/login', (req, res) => res.render('admin/login', { toast: popToast(req) }));
 app.post('/admin/login', (req, res) => {
   const pass = (req.body.pass || '').trim();
@@ -284,6 +294,7 @@ app.post('/admin/login', (req, res) => {
 });
 app.get('/admin/logout', (req, res) => { req.session.destroy(() => res.redirect('/')); });
 
+// ------------ Admin (editor)
 app.get('/admin/editar', requireAdmin, async (req, res) => {
   const placa = (req.query.placa || '').toString().trim();
   let truck = null, fotos = [], docs = [], avisos = [];
@@ -345,7 +356,7 @@ app.post('/admin/editar', requireAdmin, async (req, res) => {
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// Subida múltiple de fotos (galería)
+// ------------ Admin (galería)
 app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req, res) => {
   try {
     const placa = String(req.body.placa || '').trim().toUpperCase();
@@ -375,7 +386,6 @@ app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req
   }
 });
 
-// Edición de imágenes (galería)
 app.post('/admin/photo/delete', requireAdmin, (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const name = sanitizeName(String(req.body.name || '').trim());
@@ -457,7 +467,7 @@ app.post('/admin/cover/upload', requireAdmin, upload.single('portada'), async (r
   return res.redirect('/admin/editar?placa='+encodeURIComponent(placa));
 });
 
-// CRUD documentos manual
+// ------------ Documentos
 app.post('/admin/doc/add', requireAdmin, async (req, res) => {
   const b = req.body;
   const placa = String(b.placa || '').trim().toUpperCase();
@@ -558,10 +568,35 @@ app.post('/c/:placa/report', async (req, res) => {
   return res.redirect(`/c/${encodeURIComponent(placa)}?enviado=1`);
 });
 
-// API avisos (json)
-app.get('/api/avisos', requireAdmin, async (req, res) => {
-  try { res.json(await listAlerts()); }
-  catch (e) { res.status(500).json({ error: e.message }); }
+// -------- Reportes/quejas (API y vista)
+app.get('/api/reportes', requireAdmin, async (req, res) => {
+  try {
+    const placa = (req.query.placa || '').trim().toUpperCase();
+    let sql = 'SELECT * FROM reports';
+    const params = [];
+    if (placa) { sql += ' WHERE placa = ?'; params.push(placa); }
+    sql += ' ORDER BY createdAt DESC LIMIT 500';
+    const [rows] = await pool.query(sql, params);
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/admin/reportes', requireAdmin, async (req, res) => {
+  try {
+    const placa = (req.query.placa || '').trim().toUpperCase();
+    let sql = 'SELECT * FROM reports';
+    const params = [];
+    if (placa) { sql += ' WHERE placa = ?'; params.push(placa); }
+    sql += ' ORDER BY createdAt DESC LIMIT 500';
+    const [rows] = await pool.query(sql, params);
+    res.render('admin/reportes', { placa, reportes: rows, toast: popToast(req) });
+  } catch (e) {
+    console.error('admin/reportes:', e.message);
+    setToast(req, 'err', 'Error cargando reportes');
+    res.render('admin/reportes', { placa: '', reportes: [], toast: popToast(req) });
+  }
 });
 
 // ------------ Health check simple para Render (no toca DB)
