@@ -545,6 +545,33 @@ app.get('/health', async (req, res) => {
     res.status(500).json({ ok: false, error: e.message });
   }
 });
+async function waitForDb(maxRetries = 10, delayMs = 2000) {
+  for (let i = 1; i <= maxRetries; i++) {
+    try {
+      const [rows] = await pool.query('SELECT 1 AS ok');
+      if (rows?.[0]?.ok === 1) {
+        console.log('DB OK');
+        return;
+      }
+    } catch (e) {
+      console.log(`DB retry ${i}/${maxRetries}: ${e.message}`);
+    }
+    await new Promise(r => setTimeout(r, delayMs));
+  }
+  console.warn('DB no disponible, arrancando igual (las rutas que usan DB fallarán hasta que conecte).');
+}
+
+// Arranque seguro sin top-level await
+(async () => {
+  try {
+    await waitForDb(); // no bloquea para siempre
+    const PORT = process.env.PORT || 3000;
+    app.listen(PORT, () => console.log(`Servidor en ${process.env.BASE_URL || 'http://localhost:'+PORT}`));
+  } catch (e) {
+    console.error('Fallo al iniciar:', e);
+    process.exit(1);
+  }
+})();
 
 // ------------ Start
 app.listen(PORT, () => {
