@@ -1,11 +1,12 @@
 // server.js — Camiones QR (MySQL + Express/EJS/Multer)
-// - Portada SOLO por subida (no URL) y NO aparece en la galería/lista
-// - Documentos con fecha de vencimiento + correo 22 días antes (cron)
+// - QR usa BASE_URL o cabeceras proxy (no localhost) y manda headers no-cache
+// - /debug/base para verificar la URL base en producción
+// - Portada SOLO por subida y NO aparece en la galería/lista
+// - Documentos con vencimiento + correo 22 días antes (cron)
 // - Galería (subir/renombrar/reemplazar/eliminar/portada)
 // - Reportes públicos + vista /admin/reportes y API /api/reportes
-// - Health check /healthz y arranque con reintentos a DB
-// - Una sola llamada a app.listen (evita EADDRINUSE)
-// - QR genera URL pública (no localhost) usando BASE_URL o cabeceras proxy
+// - Health check /healthz
+// - Arranque con reintentos a DB y una sola llamada a app.listen
 
 import express from 'express';
 import session from 'express-session';
@@ -17,17 +18,15 @@ import QRCode from 'qrcode';
 import dotenv from 'dotenv';
 import nodemailer from 'nodemailer';
 import cron from 'node-cron';
-import { pool } from './db.js'; // ← requiere db.js (mysql2/promise)
+import { pool } from './db.js';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-const BASE_URL = process.env.BASE_URL || 'http://localhost:3000';
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin-1234';
 
-// ------------ Middlewares
 app.use(express.urlencoded({ extended: true }));
 app.use(session({
   secret: process.env.SESSION_SECRET || 'secret-session',
@@ -38,7 +37,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
-// --- usar el host real detrás de Render/Proxy ---
+// Usar el host real detrás de Render/Proxy para armar URLs absolutas
 app.set('trust proxy', 1);
 function absoluteBase(req) {
   const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
@@ -49,7 +48,7 @@ function absoluteBase(req) {
 // Subidas en memoria (multer)
 const upload = multer({ storage: multer.memoryStorage() });
 
-// ------------ Email (avisos y reportes)
+// Email (avisos y reportes)
 let transporter = null;
 if (process.env.SMTP_HOST) {
   transporter = nodemailer.createTransport({
@@ -60,7 +59,7 @@ if (process.env.SMTP_HOST) {
   });
 }
 
-// ------------ Helpers de archivos (galería)
+// Helpers de archivos (galería)
 function ensureFolder(folderPath) { fs.mkdirSync(folderPath, { recursive: true }); }
 const ALLOWED_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 function getUploadDir(placa) {
@@ -81,7 +80,6 @@ function listPhotos(placa) {
     .filter(f => ALLOWED_EXTS.has(path.extname(f).toLowerCase()))
     .map(f => `${relRoot}/${f}`);
 }
-// Ocultar portada de la galería/lista
 function fotosSinPortada(fotos, portadaUrl){
   if (!portadaUrl) return fotos;
   const cover = (portadaUrl || '').toLowerCase();
@@ -97,7 +95,7 @@ function setToast(req, type, msg) { req.session.toast = { type, msg }; }
 function popToast(req) { const t = req.session.toast; req.session.toast = null; return t; }
 function requireAdmin(req, res, next) { if (req.session && req.session.admin) return next(); return res.redirect('/admin/login'); }
 
-// ------------ MySQL helpers (placas, docs, reportes)
+// MySQL helpers
 async function getTruck(placa) {
   const [rows] = await pool.query('SELECT * FROM trucks WHERE placa = ?', [String(placa).toUpperCase()]);
   const row = rows[0];
@@ -151,16 +149,6 @@ async function addReport(rep) {
     [rep.id, rep.placa, rep.tipo, rep.nombre, rep.telefono, rep.email, rep.mensaje, rep.createdAt]
   );
 }
-function docStatus(dateStr) {
-  if (!dateStr) return { estado: 'sin-fecha', dias: null };
-  const v = new Date(dateStr);
-  if (isNaN(v)) return { estado: 'sin-fecha', dias: null };
-  const today = new Date(); today.setHours(0,0,0,0);
-  const diff = Math.floor((v - today) / (1000 * 60 * 60 * 24));
-  if (diff < 0) return { estado: 'vencido', dias: diff };
-  if (diff <= 30) return { estado: 'por-vencer', dias: diff };
-  return { estado: 'vigente', dias: diff };
-}
 async function listAlerts() {
   const [rows] = await pool.query(
     `SELECT d.*, t.placa, DATEDIFF(d.fecha_vencimiento, CURDATE()) AS dias
@@ -187,7 +175,7 @@ async function listAlerts() {
   return out;
 }
 
-// ------------ Crear esquema si falta
+// Crear esquema si falta
 async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS trucks (
@@ -235,7 +223,7 @@ async function ensureSchema() {
   console.log('Schema OK');
 }
 
-// ------------ Rutas públicas
+// Rutas públicas
 app.get('/', (req, res) => {
   res.render('index', { toast: popToast(req) });
 });
@@ -244,7 +232,7 @@ app.get('/c/:placa', async (req, res) => {
   const placa = req.params.placa;
   const truck = await getTruck(placa);
   let fotos = truck ? listPhotos(truck.placa) : [];
-  fotos = fotosSinPortada(fotos, truck?.foto); // ocultar portada en la galería/lista
+  fotos = fotosSinPortada(fotos, truck?.foto);
 
   let docs = [];
   let avisos = [];
@@ -258,11 +246,7 @@ app.get('/c/:placa', async (req, res) => {
         dias = Math.floor((v - today)/(1000*60*60*24));
         estado = dias < 0 ? 'vencido' : (dias <= 30 ? 'por-vencer' : 'vigente');
       }
-      return {
-        ...d,
-        fecha_vencimiento: v ? v.toISOString().slice(0,10) : null,
-        estado, dias
-      };
+      return { ...d, fecha_vencimiento: v ? v.toISOString().slice(0,10) : null, estado, dias };
     });
     avisos = docs.filter(d => d.estado === 'vencido' || d.estado === 'por-vencer');
   }
@@ -271,21 +255,37 @@ app.get('/c/:placa', async (req, res) => {
   res.render('ficha', { truck, fotos, docs, avisos, enviado, error });
 });
 
-// QR PNG (usa BASE_URL si existe; si no, arma la URL con el host real del request)
+// QR PNG — usa BASE_URL si existe; si no, arma la URL con el host real del request
 app.get('/qr/:placa.png', async (req, res) => {
   try {
     const placa = req.params.placa;
-    const base  = process.env.BASE_URL || absoluteBase(req); // <— clave
+    const base  = process.env.BASE_URL || absoluteBase(req);
     const url   = `${base}/c/${encodeURIComponent(placa)}`;
     const buf   = await QRCode.toBuffer(url, { type: 'png', width: 320, margin: 1 });
+
+    // Headers para evitar caché de QR viejo (localhost)
     res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    res.setHeader('Pragma', 'no-cache');
+    res.setHeader('Expires', '0');
+
     res.send(buf);
   } catch (err) {
     res.status(500).send('QR error');
   }
 });
 
-// ------------ Admin (login)
+// Ruta de diagnóstico para revisar base URL en producción
+app.get('/debug/base', (req, res) => {
+  const auto = absoluteBase(req);
+  res.json({
+    BASE_URL_env: process.env.BASE_URL || null,
+    absoluteBase: auto,
+    finalBase: process.env.BASE_URL || auto
+  });
+});
+
+// Admin (login)
 app.get('/admin/login', (req, res) => res.render('admin/login', { toast: popToast(req) }));
 app.post('/admin/login', (req, res) => {
   const pass = (req.body.pass || '').trim();
@@ -294,7 +294,7 @@ app.post('/admin/login', (req, res) => {
 });
 app.get('/admin/logout', (req, res) => { req.session.destroy(() => res.redirect('/')); });
 
-// ------------ Admin (editor)
+// Admin (editor)
 app.get('/admin/editar', requireAdmin, async (req, res) => {
   const placa = (req.query.placa || '').toString().trim();
   let truck = null, fotos = [], docs = [], avisos = [];
@@ -347,8 +347,7 @@ app.post('/admin/editar', requireAdmin, async (req, res) => {
     anio: b.anio || '',
     vin: b.vin || '',
     telefono_quejas: b.telefono_quejas || '',
-    // portada NO se toma desde texto; se conserva hasta que la suban/cambien
-    foto: existing.foto || '',
+    foto: existing.foto || '', // portada se maneja por upload, no texto
     notas
   };
   await upsertTruck(truck);
@@ -356,7 +355,7 @@ app.post('/admin/editar', requireAdmin, async (req, res) => {
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// ------------ Admin (galería)
+// Admin (galería)
 app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req, res) => {
   try {
     const placa = String(req.body.placa || '').trim().toUpperCase();
@@ -467,7 +466,7 @@ app.post('/admin/cover/upload', requireAdmin, upload.single('portada'), async (r
   return res.redirect('/admin/editar?placa='+encodeURIComponent(placa));
 });
 
-// ------------ Documentos
+// Documentos
 app.post('/admin/doc/add', requireAdmin, async (req, res) => {
   const b = req.body;
   const placa = String(b.placa || '').trim().toUpperCase();
@@ -521,7 +520,7 @@ app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), async (req
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// -------- Reporte público (form al final de la ficha)
+// Reporte público (form al final de la ficha)
 app.post('/c/:placa/report', async (req, res) => {
   const placa = String(req.params.placa || '').toUpperCase();
 
@@ -568,7 +567,7 @@ app.post('/c/:placa/report', async (req, res) => {
   return res.redirect(`/c/${encodeURIComponent(placa)}?enviado=1`);
 });
 
-// -------- Reportes/quejas (API y vista)
+// Reportes/quejas (API y vista)
 app.get('/api/reportes', requireAdmin, async (req, res) => {
   try {
     const placa = (req.query.placa || '').trim().toUpperCase();
@@ -599,10 +598,10 @@ app.get('/admin/reportes', requireAdmin, async (req, res) => {
   }
 });
 
-// ------------ Health check simple para Render (no toca DB)
+// Health check
 app.get('/healthz', (req, res) => res.status(200).send('OK'));
 
-// ------------ CRON: mail 22 días antes (desactivable con DISABLE_CRON=true)
+// CRON: mail 22 días antes (desactivable con DISABLE_CRON=true)
 if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
   cron.schedule('0 9 * * *', async () => {
     try {
@@ -638,7 +637,7 @@ if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
   }, { timezone: process.env.TZ || 'America/Costa_Rica' });
 }
 
-// ------------ Arranque seguro: espera DB, asegura esquema y escucha UNA sola vez
+// Arranque seguro
 async function waitForDb(maxRetries = 10, delayMs = 2000) {
   for (let i = 1; i <= maxRetries; i++) {
     try {
@@ -657,21 +656,24 @@ async function waitForDb(maxRetries = 10, delayMs = 2000) {
 
 let serverStarted = false;
 function startServer() {
-  if (serverStarted) return; // evita doble arranque
+  if (serverStarted) return;
   serverStarted = true;
-  const PORT = process.env.PORT || 3000; // en Render será 10000
-  app.listen(PORT, () => {
-    console.log(`Servidor en ${process.env.BASE_URL || 'http://localhost:'+PORT}`);
-  });
+  const PORT = process.env.PORT || 3000;
+  console.log(`Servidor en ${process.env.BASE_URL || 'http://localhost:'+PORT}`);
+  app.listen(PORT, () => {});
 }
 
 (async () => {
   try {
     await waitForDb();
-    await ensureSchema();   // crea tablas si faltan
+    try {
+      await ensureSchema();   // crea tablas si faltan
+    } catch (e) {
+      console.warn('Schema no se pudo crear aún:', e.message);
+    }
     startServer();
   } catch (e) {
     console.error('Fallo al iniciar:', e);
-    process.exit(1);
+    // No salgas; deja corriendo para poder ver /healthz
   }
 })();

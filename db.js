@@ -7,15 +7,10 @@ function fromUrl(dbUrl) {
   const hostname = u.hostname;
   const port = Number(u.port || 3306);
   const database = (u.pathname || '').replace(/^\//, '');
-  const [user, password] = (u.username ? `${u.username}:${u.password}` : (u.auth || '')).split(':');
-
+  // username y password desde URL estándar
+  const user = decodeURIComponent(u.username || '');
+  const password = decodeURIComponent(u.password || '');
   return { host: hostname, port, user, password, database };
-}
-
-function mask(s) {
-  if (!s) return '';
-  if (s.length <= 2) return '*'.repeat(s.length);
-  return s[0] + '*'.repeat(Math.max(1, s.length - 2)) + s[s.length - 1];
 }
 
 let cfg;
@@ -34,7 +29,7 @@ if (process.env.DATABASE_URL) {
   };
 }
 
-// Validaciones claras
+// Validaciones claras (para que no quede user '')
 function assertNonEmpty(name, val) {
   if (!val) throw new Error(`Falta la variable ${name} (o viene vacía)`);
 }
@@ -57,13 +52,13 @@ const ssl =
     ? { rejectUnauthorized: false }
     : undefined;
 
-// Log de diagnóstico (sin revelar password)
+// Log de diagnóstico (sin password)
 console.log(
   '[DB] using',
   usingUrl ? 'DATABASE_URL' : 'MYSQL* envs',
   'host=', cfg.host,
   'port=', cfg.port,
-  'user=', cfg.user,
+  'user=', cfg.user ? '(ok)' : '(vacío)',
   'db=', cfg.database,
   'ssl=', !!ssl
 );

@@ -44,7 +44,7 @@
         <div style="display:grid;grid-template-columns:160px 1fr 160px;gap:12px;align-items:center">
           <div>
             <% if (truck.foto) { %>
-              <img src="<%= truck.foto %>" alt="Portada" style="width:100%;height:120px;object-fit:cover;border:1px solid #20304d;border-radius:8px"/>
+              <img src="/qr/<%= truck.placa %>.png?v=2" alt="QR de la unidad">
             <% } else { %>
               <div class="muted" style="border:1px dashed #20304d;border-radius:8px;height:120px;display:flex;align-items:center;justify-content:center">Sin portada</div>
             <% } %>

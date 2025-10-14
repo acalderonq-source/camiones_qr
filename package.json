@@ -1,7 +1,7 @@
 {
   "name": "camiones-qr-node",
   "version": "1.0.0",
-  "description": "QR por camión: ficha pública con galería + admin para subir fotos (Node/Express/EJS/Multer/MySQL).",
+  "description": "QR por camión: ficha pública con galería + admin + reportes (Node/Express/EJS/Multer/MySQL).",
   "type": "module",
   "main": "server.js",
   "scripts": {
