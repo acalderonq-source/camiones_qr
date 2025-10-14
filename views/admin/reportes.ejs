@@ -4,76 +4,69 @@
   <meta charset="utf-8" />
   <title>Reportes / Quejas</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <link rel="stylesheet" href="/css/admin.css" />
-  <style>
-    body{font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif; margin: 20px;}
-    header{display:flex; gap:12px; align-items:center; margin-bottom:16px;}
-    .row{display:flex; gap:10px; align-items:center; flex-wrap:wrap;}
-    table{width:100%; border-collapse:collapse; margin-top:12px; font-size:14px;}
-    th,td{border-bottom:1px solid #e5e7eb; padding:8px; vertical-align:top;}
-    th{background:#f8fafc; text-align:left;}
-    .muted{color:#6b7280; font-size:12px;}
-    .pill{display:inline-block; padding:2px 8px; border-radius:999px; background:#eef2ff; color:#3730a3; font-size:12px;}
-    .toast-ok{background:#ecfdf5; color:#065f46; padding:8px 10px; border-radius:8px; margin:8px 0;}
-    .toast-err{background:#fef2f2; color:#991b1b; padding:8px 10px; border-radius:8px; margin:8px 0;}
-    input,button{height:36px; padding:0 10px; border:1px solid #d1d5db; border-radius:8px;}
-    button{background:#111827; color:white; border:none; cursor:pointer;}
-    button.secondary{background:#e5e7eb; color:#111827;}
-    .topbar{display:flex; gap:8px; align-items:center; justify-content:space-between; flex-wrap:wrap;}
-    a{color:#2563eb; text-decoration:none;}
-    a:hover{text-decoration:underline;}
-  </style>
+  <link rel="stylesheet" href="/styles.css" />
 </head>
 <body>
-  <div class="topbar">
-    <header>
+  <main class="wrap">
+    <div class="header">
       <h2>Reportes / Quejas</h2>
-      <a class="secondary" href="/admin/editar">← Volver a Admin</a>
-    </header>
-    <form class="row" method="get" action="/admin/reportes">
-      <input name="placa" placeholder="Filtrar por placa" value="<%= placa || '' %>" />
-      <button type="submit">Filtrar</button>
-      <a class="secondary" href="/admin/reportes">Limpiar</a>
-    </form>
-  </div>
+      <div style="display:flex;gap:8px">
+        <a class="btn" href="/admin/editar">Volver</a>
+        <a class="btn" href="/admin/logout">Salir</a>
+      </div>
+    </div>
 
-  <% if (toast) { %>
-    <div class="toast-<%= toast.type === 'ok' ? 'ok' : 'err' %>"><%= toast.msg %></div>
-  <% } %>
+    <% if (toast) { %>
+      <div class="alert <%= toast.type==='ok' ? '' : 'warn' %>"><%= toast.msg %></div>
+    <% } %>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Fecha</th>
-        <th>Placa</th>
-        <th>Tipo</th>
-        <th>Contacto</th>
-        <th>Mensaje</th>
-      </tr>
-    </thead>
-    <tbody>
-      <% if (!reportes || reportes.length === 0) { %>
-        <tr><td colspan="5" class="muted">No hay reportes.</td></tr>
-      <% } else { %>
-        <% reportes.forEach(r => { %>
-          <tr>
-            <td class="muted"><%= new Date(r.createdAt).toLocaleString() %></td>
-            <td><span class="pill"><%= r.placa %></span></td>
-            <td><%= r.tipo || '-' %></td>
-            <td>
-              <div><b><%= r.nombre || '-' %></b></div>
-              <div class="muted"><%= r.telefono || '-' %></div>
-              <div class="muted"><%= r.email || '-' %></div>
-            </td>
-            <td style="white-space:pre-wrap"><%= (r.mensaje || '').replace(/</g,'&lt;').replace(/>/g,'&gt;') %></td>
-          </tr>
-        <% }) %>
-      <% } %>
-    </tbody>
-  </table>
+    <section class="card">
+      <form class="grid" method="get" action="/admin/reportes">
+        <label>Filtrar por placa
+          <input name="placa" placeholder="Ej: ABC123" value="<%= placa || '' %>" />
+        </label>
+        <div><button class="btn" type="submit">Filtrar</button></div>
+        <div><a class="btn" href="/admin/reportes">Limpiar</a></div>
+      </form>
+    </section>
 
-  <p class="muted" style="margin-top:10px">
-    También disponible como JSON (con login): <a href="/api/reportes">/api/reportes</a>
-  </p>
+    <section class="card">
+      <div style="overflow:auto">
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Placa</th>
+              <th>Tipo</th>
+              <th>Contacto</th>
+              <th>Mensaje</th>
+            </tr>
+          </thead>
+          <tbody>
+            <% if (!reportes || reportes.length === 0) { %>
+              <tr><td colspan="5" class="muted">No hay reportes.</td></tr>
+            <% } else { %>
+              <% reportes.forEach(r => { %>
+                <tr>
+                  <td class="muted"><%= new Date(r.createdAt).toLocaleString() %></td>
+                  <td><span class="badge"><%= r.placa %></span></td>
+                  <td><%= r.tipo || '-' %></td>
+                  <td>
+                    <div><b><%= r.nombre || '-' %></b></div>
+                    <div class="muted"><%= r.telefono || '-' %></div>
+                    <div class="muted"><%= r.email || '-' %></div>
+                  </td>
+                  <td style="white-space:pre-wrap"><%= (r.mensaje || '').replace(/</g,'&lt;').replace(/>/g,'&gt;') %></td>
+                </tr>
+              <% }) %>
+            <% } %>
+          </tbody>
+        </table>
+      </div>
+      <p class="muted" style="margin-top:10px">
+        También disponible como JSON (con login): <a href="/api/reportes">/api/reportes</a>
+      </p>
+    </section>
+  </main>
 </body>
 </html>

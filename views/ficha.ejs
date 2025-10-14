@@ -23,14 +23,10 @@
     <% } else { %>
 
       <% if (typeof enviado !== 'undefined' && enviado) { %>
-        <div class="alert" style="margin-bottom:12px">
-          <strong>¡Gracias!</strong> Tu reporte fue enviado.
-        </div>
+        <div class="alert" style="margin-bottom:12px"><strong>¡Gracias!</strong> Tu reporte fue enviado.</div>
       <% } %>
       <% if (typeof error !== 'undefined' && error) { %>
-        <div class="alert warn" style="margin-bottom:12px">
-          <strong>Ups…</strong> Escribe el mensaje del reporte.
-        </div>
+        <div class="alert warn" style="margin-bottom:12px"><strong>Ups…</strong> Escribe el mensaje del reporte.</div>
       <% } %>
 
       <% if (avisos && avisos.length) { %>
@@ -80,10 +76,8 @@
           <div style="text-align:right">
             <div class="muted" style="font-size:.8rem;margin-bottom:6px">QR de esta ficha</div>
             <!-- Cache-busting para evitar QR viejo (localhost) -->
-            <!-- Ahora -->
-<img src="/qrimg/<%= encodeURIComponent(truck.placa) %>.png?v=3"
-     alt="QR" style="width:140px;height:140px;border:1px solid #20304d;border-radius:8px;object-fit:contain"/>
-
+            <img src="/qrimg/<%= encodeURIComponent(truck.placa) %>.png?v=4" alt="QR"
+                 style="width:140px;height:140px;border:1px solid #20304d;border-radius:8px;object-fit:contain"/>
           </div>
         </div>
       </section>

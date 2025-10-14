@@ -1,5 +1,5 @@
 // server.js — Camiones QR (MySQL + Express/EJS/Multer)
-// - QR en /qrimg (no localhost) + headers no-cache y fallback a BASE_URL o proxy
+// - QR en /qrimg (no localhost) + headers no-cache y fallback a BASE_URL o PUBLIC_BASE_URL
 // - Redirección /qr → /qrimg (compatibilidad)
 // - /debug/base para inspección
 // - Portada solo por upload y NO aparece en la galería
@@ -259,14 +259,21 @@ app.get('/c/:placa', async (req, res) => {
   res.render('ficha', { truck, fotos, docs, avisos, enviado, error });
 });
 
-// --------------------- QR: nueva ruta /qrimg (NO localhost) ---------------------
+// --------------------- QR: /qrimg (NO localhost) + anti-localhost ---------------------
 app.get('/qrimg/:placa.png', async (req, res) => {
   try {
     const placa = req.params.placa;
-    const base  = process.env.BASE_URL || absoluteBase(req);
-    const url   = `${base}/c/${encodeURIComponent(placa)}`;
 
-    const buf   = await QRCode.toBuffer(url, { type: 'png', width: 320, margin: 1 });
+    // base candidata a usar
+    let base = process.env.BASE_URL || absoluteBase(req);
+    // si detecta localhost, fuerza dominio público
+    if (/localhost|127\.0\.0\.1/i.test(base)) {
+      base = process.env.PUBLIC_BASE_URL || 'https://camiones-qr.onrender.com';
+    }
+    const url = `${base}/c/${encodeURIComponent(placa)}`;
+    console.log('[QR] base=', base, 'url=', url);
+
+    const buf = await QRCode.toBuffer(url, { type: 'png', width: 320, margin: 1 });
 
     // Evitar caché de QR viejos
     res.setHeader('Content-Type', 'image/png');

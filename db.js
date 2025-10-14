@@ -1,4 +1,4 @@
-// db.js — pool MySQL (Railway/Render) con DATABASE_URL o variables sueltas (validación estricta)
+// db.js — pool MySQL con soporte DATABASE_URL o variables sueltas (validación estricta)
 import mysql from 'mysql2/promise';
 import url from 'url';
 
@@ -7,7 +7,6 @@ function fromUrl(dbUrl) {
   const hostname = u.hostname;
   const port = Number(u.port || 3306);
   const database = (u.pathname || '').replace(/^\//, '');
-  // username y password desde URL estándar
   const user = decodeURIComponent(u.username || '');
   const password = decodeURIComponent(u.password || '');
   return { host: hostname, port, user, password, database };
@@ -29,7 +28,6 @@ if (process.env.DATABASE_URL) {
   };
 }
 
-// Validaciones claras (para que no quede user '')
 function assertNonEmpty(name, val) {
   if (!val) throw new Error(`Falta la variable ${name} (o viene vacía)`);
 }
@@ -52,7 +50,6 @@ const ssl =
     ? { rejectUnauthorized: false }
     : undefined;
 
-// Log de diagnóstico (sin password)
 console.log(
   '[DB] using',
   usingUrl ? 'DATABASE_URL' : 'MYSQL* envs',
