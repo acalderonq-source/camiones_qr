@@ -1,9 +1,8 @@
 // server.js — Camiones QR (MySQL + Express/EJS/Multer)
 // - Portada SOLO por subida (no URL) y NO aparece en la galería/lista
-// - Permisos con fecha de vencimiento + correo 22 días antes (cron)
+// - Documentos con fecha de vencimiento + correo 22 días antes (cron)
 // - Galería (subir/renombrar/reemplazar/eliminar/portada)
-// - Reportes públicos guardados en MySQL + email opcional
-// - QR por placa
+// - Reportes públicos
 // - Health check /healthz y arranque con reintentos a DB
 // - Una sola llamada a app.listen (evita EADDRINUSE)
 
@@ -179,6 +178,54 @@ async function listAlerts() {
   return out;
 }
 
+// ------------ Crear esquema si falta
+async function ensureSchema() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trucks (
+      placa VARCHAR(32) PRIMARY KEY,
+      unidad VARCHAR(64) NULL,
+      cedis  VARCHAR(64) NULL,
+      marca  VARCHAR(64) NULL,
+      modelo VARCHAR(64) NULL,
+      anio   VARCHAR(16) NULL,
+      vin    VARCHAR(64) NULL,
+      telefono_quejas VARCHAR(64) NULL,
+      foto   VARCHAR(512) NULL,
+      notas  TEXT NULL
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS documents (
+      id VARCHAR(32) PRIMARY KEY,
+      placa VARCHAR(32) NOT NULL,
+      categoria VARCHAR(64) NOT NULL,
+      titulo VARCHAR(128) NOT NULL,
+      fecha_vencimiento DATE NULL,
+      url VARCHAR(512) NULL,
+      alert22Sent TINYINT(1) NOT NULL DEFAULT 0,
+      CONSTRAINT fk_documents_truck FOREIGN KEY (placa)
+        REFERENCES trucks(placa) ON DELETE CASCADE ON UPDATE CASCADE
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS reports (
+      id VARCHAR(32) PRIMARY KEY,
+      placa VARCHAR(32) NOT NULL,
+      tipo VARCHAR(32) NOT NULL,
+      nombre VARCHAR(128) NULL,
+      telefono VARCHAR(64) NULL,
+      email VARCHAR(128) NULL,
+      mensaje TEXT NOT NULL,
+      createdAt DATETIME NOT NULL,
+      INDEX idx_reports_placa_created (placa, createdAt)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+  `);
+
+  console.log('Schema OK');
+}
+
 // ------------ Rutas públicas
 app.get('/', (req, res) => {
   res.render('index', { toast: popToast(req) });
@@ -239,23 +286,36 @@ app.get('/admin/logout', (req, res) => { req.session.destroy(() => res.redirect(
 
 app.get('/admin/editar', requireAdmin, async (req, res) => {
   const placa = (req.query.placa || '').toString().trim();
-  let truck = null, fotos = [], docs = [];
-  const avisos = await listAlerts();
-  if (placa) {
-    truck = (await getTruck(placa)) || { placa: placa.toUpperCase(), notas: [], documentos: [] };
-    fotos = listPhotos(placa);
-    fotos = fotosSinPortada(fotos, truck?.foto); // ocultar portada también en admin si querés
-    const dbDocs = await getDocsByPlaca(placa);
-    docs = dbDocs.map(d => {
-      const v = d.fecha_vencimiento ? new Date(d.fecha_vencimiento) : null;
-      const today = new Date(); today.setHours(0,0,0,0);
-      let estado = 'sin-fecha', dias = null;
-      if (v && !isNaN(v)) {
-        dias = Math.floor((v - today)/(1000*60*60*24));
-        estado = dias < 0 ? 'vencido' : (dias <= 30 ? 'por-vencer' : 'vigente');
-      }
-      return { ...d, fecha_vencimiento: v ? v.toISOString().slice(0,10) : null, estado, dias };
-    });
+  let truck = null, fotos = [], docs = [], avisos = [];
+  try {
+    try { avisos = await listAlerts(); } catch (e) { console.error('listAlerts:', e.message); avisos = []; }
+
+    if (placa) {
+      try {
+        truck = (await getTruck(placa)) || { placa: placa.toUpperCase(), notas: [], documentos: [] };
+      } catch (e) { console.error('getTruck:', e.message); truck = { placa: placa.toUpperCase(), notas: [], documentos: [] }; }
+
+      try {
+        fotos = listPhotos(placa);
+        fotos = fotosSinPortada(fotos, truck?.foto);
+      } catch (e) { console.error('listPhotos:', e.message); fotos = []; }
+
+      try {
+        const dbDocs = await getDocsByPlaca(placa);
+        docs = (dbDocs || []).map(d => {
+          const v = d.fecha_vencimiento ? new Date(d.fecha_vencimiento) : null;
+          const today = new Date(); today.setHours(0,0,0,0);
+          let estado = 'sin-fecha', dias = null;
+          if (v && !isNaN(v)) {
+            dias = Math.floor((v - today)/(1000*60*60*24));
+            estado = dias < 0 ? 'vencido' : (dias <= 30 ? 'por-vencer' : 'vigente');
+          }
+          return { ...d, fecha_vencimiento: v ? v.toISOString().slice(0,10) : null, estado, dias };
+        });
+      } catch (e) { console.error('getDocsByPlaca:', e.message); docs = []; }
+    }
+  } catch (e) {
+    console.error('admin/editar fatal:', e);
   }
   res.render('admin/editar', { placa, truck, fotos, docs, avisos, toast: popToast(req) });
 });
@@ -499,7 +559,10 @@ app.post('/c/:placa/report', async (req, res) => {
 });
 
 // API avisos (json)
-app.get('/api/avisos', requireAdmin, async (req, res) => res.json(await listAlerts()));
+app.get('/api/avisos', requireAdmin, async (req, res) => {
+  try { res.json(await listAlerts()); }
+  catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // ------------ Health check simple para Render (no toca DB)
 app.get('/healthz', (req, res) => res.status(200).send('OK'));
@@ -540,7 +603,7 @@ if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
   }, { timezone: process.env.TZ || 'America/Costa_Rica' });
 }
 
-// ------------ Arranque seguro: espera DB y escucha UNA sola vez
+// ------------ Arranque seguro: espera DB, asegura esquema y escucha UNA sola vez
 async function waitForDb(maxRetries = 10, delayMs = 2000) {
   for (let i = 1; i <= maxRetries; i++) {
     try {
@@ -570,6 +633,7 @@ function startServer() {
 (async () => {
   try {
     await waitForDb();
+    await ensureSchema();   // crea tablas si faltan
     startServer();
   } catch (e) {
     console.error('Fallo al iniciar:', e);
