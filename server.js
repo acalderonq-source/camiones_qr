@@ -536,6 +536,15 @@ if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
     }
   }, { timezone: process.env.TZ || 'America/Costa_Rica' });
 }
+app.get('/health', async (req, res) => {
+  try {
+    // Si usas MySQL:
+    const [rows] = await pool.query('SELECT 1 AS ok');
+    res.status(200).json({ ok: true, db: rows?.[0]?.ok === 1 });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
 
 // ------------ Start
 app.listen(PORT, () => {
