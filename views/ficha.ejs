@@ -44,7 +44,7 @@
         <div style="display:grid;grid-template-columns:160px 1fr 160px;gap:12px;align-items:center">
           <div>
             <% if (truck.foto) { %>
-              <img src="/qr/<%= truck.placa %>.png?v=2" alt="QR de la unidad">
+              <img src="<%= truck.foto %>" alt="Portada" style="width:100%;height:120px;object-fit:cover;border:1px solid #20304d;border-radius:8px" loading="lazy"/>
             <% } else { %>
               <div class="muted" style="border:1px dashed #20304d;border-radius:8px;height:120px;display:flex;align-items:center;justify-content:center">Sin portada</div>
             <% } %>
@@ -79,7 +79,8 @@
 
           <div style="text-align:right">
             <div class="muted" style="font-size:.8rem;margin-bottom:6px">QR de esta ficha</div>
-            <img src="/qr/<%= encodeURIComponent(truck.placa) %>.png" alt="QR" style="width:140px;height:140px;border:1px solid #20304d;border-radius:8px;object-fit:contain"/>
+            <!-- Cache-busting para evitar QR viejo (localhost) -->
+            <img src="/qr/<%= encodeURIComponent(truck.placa) %>.png?v=2" alt="QR" style="width:140px;height:140px;border:1px solid #20304d;border-radius:8px;object-fit:contain"/>
           </div>
         </div>
       </section>
@@ -118,8 +119,8 @@
                     </td>
                     <td>
                       <% if (d.url) { %>
-                        <a href="<%= d.url %>" target="_blank">Ver</a><br/>
-                        <img src="<%= d.url %>" alt="doc" style="max-width:120px;max-height:80px;object-fit:cover;border:1px solid #20304d;border-radius:6px;margin-top:4px"/>
+                        <a href="<%= d.url %>" target="_blank" rel="noopener noreferrer">Ver</a><br/>
+                        <img src="<%= d.url %>" alt="doc" style="max-width:120px;max-height:80px;object-fit:cover;border:1px solid #20304d;border-radius:6px;margin-top:4px" loading="lazy"/>
                       <% } else { %>
                         <span class="muted">—</span>
                       <% } %>
@@ -141,7 +142,7 @@
           <div class="gallery">
             <% for (var i=0;i<fotos.length;i++){ var u=fotos[i]; %>
               <figure class="fig">
-                <img class="responsive" src="<%= u %>" />
+                <img class="responsive" src="<%= u %>" loading="lazy" />
               </figure>
             <% } %>
           </div>
