@@ -37,3 +37,35 @@ input,select,textarea{width:100%;padding:8px;border-radius:8px;border:1px solid 
 .responsive{width:100%;height:140px;object-fit:cover;border-radius:6px;border:1px solid var(--border)}
 .row{display:flex;gap:6px;align-items:center}
 hr{border:0;border-top:1px solid var(--border);margin:10px 0}
+/* Layout del header de la ficha (portada + datos + QR) */
+.hero {
+  display: grid;
+  grid-template-columns: 160px 1fr 160px;
+  gap: 12px;
+  align-items: center;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .hero {
+    display: block;
+  }
+  .hero > div { margin-bottom: 10px; }
+  .hero img[alt="QR"] {
+    width: 120px;
+    height: 120px;
+  }
+
+  .header { flex-direction: column; align-items: flex-start; gap: 8px; }
+  .btn { padding: 10px 14px; border-radius: 12px; }
+
+  .gallery {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .responsive { height: 120px; }
+
+  .table { font-size: 14px; }
+  .table th, .table td { padding: 6px; }
+  .card .table { display: block; overflow-x: auto; white-space: nowrap; }
+}
