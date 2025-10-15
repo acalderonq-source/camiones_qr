@@ -37,3 +37,14 @@ CREATE TABLE IF NOT EXISTS reports (
   createdAt DATETIME NOT NULL,
   INDEX idx_reports_placa_created (placa, createdAt)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS photos (
+  id        VARCHAR(32) PRIMARY KEY,
+  placa     VARCHAR(32) NOT NULL,
+  filename  VARCHAR(255) NOT NULL,
+  mime      VARCHAR(100) NOT NULL,
+  data      LONGBLOB NOT NULL,
+  createdAt DATETIME NOT NULL,
+  INDEX idx_photos_placa (placa),
+  CONSTRAINT fk_photos_truck FOREIGN KEY (placa)
+    REFERENCES trucks(placa) ON DELETE CASCADE ON UPDATE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
