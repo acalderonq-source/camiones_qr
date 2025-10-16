@@ -39,8 +39,9 @@ app.use(session({
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------- DB (Railway) ----------
+// ---------- DB (Railway) ----------
 function fromUrl(dbUrl) {
-  const u = new url.URL(dbUrl);
+  const u = new URL(dbUrl);
   return {
     host: u.hostname,
     port: Number(u.port || 3306),
@@ -49,6 +50,7 @@ function fromUrl(dbUrl) {
     database: (u.pathname || '').replace(/^\//, '')
   };
 }
+
 let cfg;
 if (process.env.DATABASE_URL) cfg = fromUrl(process.env.DATABASE_URL);
 else cfg = {
@@ -58,6 +60,8 @@ else cfg = {
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE
 };
+
+// SSL para Railway público
 const ssl =
   String(process.env.MYSQL_SSL || 'false') === 'true'
     ? { rejectUnauthorized: false }
@@ -68,8 +72,14 @@ export const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
-  ssl
+  ssl,
+  // --- timeouts/keepalive para evitar ETIMEDOUT ---
+  connectTimeout: 20000,       // 20s para conectar
+  acquireTimeout: 20000,       // 20s para sacar conexión del pool
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 10000 // 10s
 });
+
 
 // ---------- Mail (opcional) ----------
 let transporter = null;
@@ -671,12 +681,14 @@ if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
 }
 
 // ---------- Arranque ----------
-async function waitForDb(maxRetries = 10, delayMs = 2000) {
+async function waitForDb(maxRetries = 20, delayMs = 5000) {
   for (let i = 1; i <= maxRetries; i++) {
     try {
       const [rows] = await pool.query('SELECT 1 AS ok');
       if (rows?.[0]?.ok === 1) { console.log('DB OK'); return; }
-    } catch (e) { console.log(`DB retry ${i}/${maxRetries}: ${e.message}`); }
+    } catch (e) {
+      console.log(`DB retry ${i}/${maxRetries}: ${e.message}`);
+    }
     await new Promise(r => setTimeout(r, delayMs));
   }
   console.warn('DB no disponible, arrancando igual.');
