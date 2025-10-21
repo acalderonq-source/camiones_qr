@@ -3,160 +3,112 @@
 <head>
   <meta charset="utf-8"/>
   <meta name="viewport" content="width=device-width,initial-scale=1"/>
-  <title>Admin — Editar</title>
+  <title>Admin | Editar</title>
   <link rel="stylesheet" href="/styles.css"/>
 </head>
 <body>
   <main class="wrap">
     <div class="header">
-      <h2>Editor</h2>
+      <h2 style="margin:0">Editor de unidades</h2>
       <div style="display:flex;gap:8px">
-        <a class="btn" href="/">Inicio</a>
         <a class="btn" href="/admin/reportes">Reportes</a>
         <a class="btn" href="/admin/logout">Salir</a>
       </div>
     </div>
 
-    <% if (toast) { %>
-      <div class="alert <%= toast.type==='ok' ? '' : 'warn' %>"><%= toast.msg %></div>
+    <% if (typeof toast !== 'undefined' && toast) { %>
+      <div class="alert"><%= toast.msg %></div>
+    <% } %>
+
+    <% if (typeof avisos !== 'undefined' && avisos && avisos.length) { %>
+      <div class="alert warn"><strong>Avisos:</strong> <%= avisos.length %> documento(s) por vencer o vencidos.</div>
     <% } %>
 
     <section class="card">
-      <form method="get" action="/admin/editar" class="grid">
-        <label>Placa
-          <input name="placa" value="<%= placa || '' %>" placeholder="Ej: ABC123" required/>
-        </label>
-        <div>
-          <button class="btn" type="submit">Abrir</button>
+      <form method="get" action="/admin/editar">
+        <div class="grid">
+          <label>Placa
+            <input name="placa" value="<%= (typeof placa !== 'undefined' && placa) ? placa : '' %>" placeholder="Ej: S36612" required/>
+          </label>
         </div>
+        <button class="btn" type="submit">Cargar</button>
       </form>
     </section>
 
-    <% if (placa) { %>
-      <% if (avisos && avisos.length) { %>
-        <div class="alert warn">
-          <strong>Avisos globales:</strong> <%= avisos.length %> doc(s) vencidos o por vencer (30 días).
-        </div>
-      <% } %>
+    <% if (typeof placa !== 'undefined' && placa) { %>
 
       <section class="card">
-        <h3 style="margin:0 0 8px">Datos de la unidad</h3>
-        <form method="post" action="/admin/editar" class="grid">
+        <h3 style="margin-top:0">Datos de la unidad</h3>
+        <form method="post" action="/admin/editar">
           <input type="hidden" name="placa" value="<%= placa %>"/>
-          <label>Unidad
-            <input name="unidad" value="<%= (truck&&truck.unidad)||'' %>"/>
-          </label>
-          <label>CEDIS
-            <input name="cedis" value="<%= (truck&&truck.cedis)||'' %>"/>
-          </label>
-          <label>Marca
-            <input name="marca" value="<%= (truck&&truck.marca)||'' %>"/>
-          </label>
-          <label>Modelo
-            <input name="modelo" value="<%= (truck&&truck.modelo)||'' %>"/>
-          </label>
-          <label>Año
-            <input name="anio" value="<%= (truck&&truck.anio)||'' %>"/>
-          </label>
-          <label>VIN
-            <input name="vin" value="<%= (truck&&truck.vin)||'' %>"/>
-          </label>
-          <label>Tel. quejas
-            <input name="telefono_quejas" value="<%= (truck&&truck.telefono_quejas)||'' %>" placeholder="8888-8888"/>
-          </label>
-          <label>Notas (separadas por ;)
-            <input name="notas" value="<%= (truck&&(truck.notas||[]).join(';'))||'' %>" placeholder="Ej: Tacógrafo nuevo; Cambio llantas"/>
-          </label>
-          <div><button class="btn" type="submit">Guardar</button></div>
+          <div class="grid">
+            <label>Unidad <input name="unidad" value="<%= (truck && truck.unidad) ? truck.unidad : '' %>"/></label>
+            <label>CEDIS <input name="cedis" value="<%= (truck && truck.cedis) ? truck.cedis : '' %>"/></label>
+            <label>Marca <input name="marca" value="<%= (truck && truck.marca) ? truck.marca : '' %>"/></label>
+            <label>Modelo <input name="modelo" value="<%= (truck && truck.modelo) ? truck.modelo : '' %>"/></label>
+            <label>Año <input name="anio" value="<%= (truck && truck.anio) ? truck.anio : '' %>"/></label>
+            <label>VIN <input name="vin" value="<%= (truck && truck.vin) ? truck.vin : '' %>"/></label>
+            <label>Tel. Quejas <input name="telefono_quejas" value="<%= (truck && truck.telefono_quejas) ? truck.telefono_quejas : '' %>"/></label>
+            <label>Notas (separa con ;) <input name="notas" value="<%= (truck && truck.notas && truck.notas.length) ? truck.notas.join('; ') : '' %>"/></label>
+          </div>
+          <button class="btn" type="submit">Guardar</button>
         </form>
       </section>
 
       <section class="card">
         <h3 style="margin-top:0">Portada</h3>
-        <div class="grid">
-          <div>
-            <% if (truck && truck.foto) { %>
-              <img src="<%= truck.foto %>" alt="Portada" style="width:160px;height:120px;object-fit:cover;border:1px solid #20304d;border-radius:8px"/>
-            <% } else { %>
-              <div class="muted" style="border:1px dashed #20304d;border-radius:8px;width:160px;height:120px;display:flex;align-items:center;justify-content:center">Sin portada</div>
-            <% } %>
+        <% if (truck && truck.foto) { %>
+          <div style="margin-bottom:8px">
+            <img src="<%= truck.foto %>" alt="Portada" style="width:160px;height:120px;object-fit:cover;border:1px solid #20304d;border-radius:8px"/>
           </div>
-          <form method="post" action="/admin/cover/upload" enctype="multipart/form-data">
-            <input type="hidden" name="placa" value="<%= placa %>"/>
-            <label>Subir imagen de portada
-              <input type="file" name="portada" accept="image/*" required/>
-            </label>
-            <button class="btn" type="submit">Subir portada</button>
-          </form>
-        </div>
+        <% } else { %>
+          <p class="muted">Sin portada.</p>
+        <% } %>
+        <form method="post" action="/admin/cover/upload" enctype="multipart/form-data" style="margin-top:8px">
+          <input type="hidden" name="placa" value="<%= placa %>"/>
+          <label>Subir nueva portada
+            <input type="file" name="portada" accept=".jpg,.jpeg,.png,.webp,.gif" required/>
+          </label>
+          <button class="btn" type="submit">Actualizar portada</button>
+        </form>
       </section>
 
       <section class="card">
-        <h3 style="margin-top:0">Subir imágenes (galería)</h3>
+        <h3 style="margin-top:0">Galería</h3>
         <form method="post" action="/admin/upload" enctype="multipart/form-data">
           <input type="hidden" name="placa" value="<%= placa %>"/>
-          <label>Seleccionar archivos (múltiples)
-            <input type="file" name="archivos" accept="image/*" multiple required/>
+          <label>Imágenes (puedes elegir varias)
+            <input type="file" name="archivos" accept=".jpg,.jpeg,.png,.webp,.gif" multiple required/>
           </label>
           <button class="btn" type="submit">Subir</button>
         </form>
 
-        <hr/>
-        <h4>Imágenes</h4>
-        <% if (fotos && fotos.length) { %>
-          <div class="gallery">
-            <% if (fotos && fotos.length) { %>
-  <div class="gallery" style="margin-top:12px">
-    <% fotos.forEach(function(f){ %>
-      <figure class="fig">
-        <img class="responsive" src="<%= f.url %>"/>
-
-        <!-- Portada -->
-        <form method="post" action="/admin/photo/cover" style="display:flex;gap:6px;padding:8px">
-          <input type="hidden" name="placa" value="<%= placa %>"/>
-          <input type="hidden" name="photo_id" value="<%= f.id %>"/>
-          <button class="btn" type="submit">Portada</button>
-        </form>
-
-        <!-- Eliminar -->
-        <form method="post" action="/admin/photo/delete" style="display:flex;gap:6px;padding:0 8px 8px">
-          <input type="hidden" name="placa" value="<%= placa %>"/>
-          <input type="hidden" name="photo_id" value="<%= f.id %>"/>
-          <button class="btn" type="submit">Eliminar</button>
-        </form>
-
-        <!-- Reemplazar -->
-        <form method="post" action="/admin/photo/replace" enctype="multipart/form-data" style="display:flex;gap:6px;padding:0 8px 12px">
-          <input type="hidden" name="placa" value="<%= placa %>"/>
-          <input type="hidden" name="photo_id" value="<%= f.id %>"/>
-          <input type="file" name="nuevo" accept=".jpg,.jpeg,.png,.webp,.gif" required/>
-          <button class="btn" type="submit">Reemplazar</button>
-        </form>
-      </figure>
-    <% }) %>
-  </div>
-<% } else { %>
-  <p class="muted">Sin imágenes.</p>
-<% } %>
-
-                <div class="row">
-                  <form method="post" action="/admin/photo/rename" style="display:flex;gap:6px">
-                    <input type="hidden" name="placa" value="<%= placa %>"/>
-                    <input type="hidden" name="name" value="<%= name %>"/>
-                    <input name="newName" placeholder="nuevo-nombre.jpg" style="width:180px"/>
-                    <button class="btn" type="submit">Renombrar</button>
-                  </form>
-                </div>
-                <div class="row">
-                  <form method="post" action="/admin/photo/replace" enctype="multipart/form-data" style="display:flex;gap:6px">
-                    <input type="hidden" name="placa" value="<%= placa %>"/>
-                    <input type="hidden" name="name" value="<%= name %>"/>
-                    <input type="file" name="nuevo" accept="image/*" required/>
-                    <button class="btn" type="submit">Reemplazar</button>
-                  </form>
-                </div>
-              </div>
-            <% } %>
+        <% if (typeof fotos !== 'undefined' && fotos && fotos.length) { %>
+          <div class="gallery" style="margin-top:12px">
+            <% fotos.forEach(function(f){ %>
+              <figure class="fig">
+                <img class="responsive" src="<%= f.url %>" alt="foto"/>
+                <!-- Portada -->
+                <form method="post" action="/admin/photo/cover" style="display:flex;gap:6px;padding:8px">
+                  <input type="hidden" name="placa" value="<%= placa %>"/>
+                  <input type="hidden" name="photo_id" value="<%= f.id %>"/>
+                  <button class="btn" type="submit">Portada</button>
+                </form>
+                <!-- Eliminar -->
+                <form method="post" action="/admin/photo/delete" style="display:flex;gap:6px;padding:0 8px 8px">
+                  <input type="hidden" name="placa" value="<%= placa %>"/>
+                  <input type="hidden" name="photo_id" value="<%= f.id %>"/>
+                  <button class="btn" type="submit">Eliminar</button>
+                </form>
+                <!-- Reemplazar -->
+                <form method="post" action="/admin/photo/replace" enctype="multipart/form-data" style="display:flex;gap:6px;padding:0 8px 12px">
+                  <input type="hidden" name="placa" value="<%= placa %>"/>
+                  <input type="hidden" name="photo_id" value="<%= f.id %>"/>
+                  <input type="file" name="nuevo" accept=".jpg,.jpeg,.png,.webp,.gif" required/>
+                  <button class="btn" type="submit">Reemplazar</button>
+                </form>
+              </figure>
+            <% }); %>
           </div>
         <% } else { %>
           <p class="muted">Sin imágenes.</p>
@@ -164,95 +116,68 @@
       </section>
 
       <section class="card">
-        <h3 style="margin-top:0">Permisos / Documentos</h3>
-        <form method="post" action="/admin/doc/add" class="grid">
-          <input type="hidden" name="placa" value="<%= placa %>"/>
-          <label>Categoría
-            <input name="categoria" required placeholder="Ej: Marchamo"/>
-          </label>
-          <label>Título
-            <input name="titulo" required placeholder="N° de póliza, etc."/>
-          </label>
-          <label>Fecha de vencimiento
-            <input type="date" name="fecha_vencimiento" required/>
-          </label>
-          <label>URL (opcional)
-            <input name="url" placeholder="/uploads/PLACA/archivo.jpg o enlace externo"/>
-          </label>
-          <div><button class="btn" type="submit">Agregar</button></div>
-        </form>
+        <h3 style="margin-top:0">Documentos</h3>
 
-        <form method="post" action="/admin/doc/upload" enctype="multipart/form-data" class="grid" style="margin-top:10px">
+        <form method="post" action="/admin/doc/add" style="margin-bottom:8px">
           <input type="hidden" name="placa" value="<%= placa %>"/>
-          <label>Categoría
-            <input name="categoria" placeholder="DOC"/>
-          </label>
-          <label>Título
-            <input name="titulo" placeholder="Documento"/>
-          </label>
-          <label>Fecha de vencimiento
-            <input type="date" name="fecha_vencimiento" required/>
-          </label>
-          <label>Imagen del documento
-            <input type="file" name="archivo" accept="image/*" required/>
-          </label>
-          <div><button class="btn" type="submit">Subir documento (con imagen)</button></div>
-        </form>
-
-        <hr/>
-        <% if (docs && docs.length) { %>
-          <div style="overflow:auto">
-            <table class="table">
-              <thead>
-                <tr>
-                  <th>Categoría</th>
-                  <th>Título</th>
-                  <th>Vence</th>
-                  <th>Estado</th>
-                  <th>Archivo</th>
-                  <th></th>
-                </tr>
-              </thead>
-              <tbody>
-                <% for (var i=0;i<docs.length;i++){ var d = docs[i]; %>
-                  <tr>
-                    <td><%= d.categoria %></td>
-                    <td><%= d.titulo %></td>
-                    <td><%= d.fecha_vencimiento || '-' %></td>
-                    <td>
-                      <% if (d.estado==='vencido') { %>
-                        <span class="badge danger">Vencido</span>
-                      <% } else if (d.estado==='por-vencer') { %>
-                        <span class="badge warn">Por vencer (<%= d.dias %> d)</span>
-                      <% } else if (d.estado==='vigente') { %>
-                        <span class="badge ok">Vigente</span>
-                      <% } else { %>
-                        <span class="badge">Sin fecha</span>
-                      <% } %>
-                    </td>
-                    <td>
-                      <% if (d.url) { %>
-                        <a href="<%= d.url %>" target="_blank" rel="noopener noreferrer">Ver</a>
-                      <% } else { %>
-                        <span class="muted">—</span>
-                      <% } %>
-                    </td>
-                    <td>
-                      <form method="post" action="/admin/doc/delete">
-                        <input type="hidden" name="placa" value="<%= placa %>"/>
-                        <input type="hidden" name="id" value="<%= d.id %>"/>
-                        <button class="btn danger" type="submit">Eliminar</button>
-                      </form>
-                    </td>
-                  </tr>
-                <% } %>
-              </tbody>
-            </table>
+          <div class="grid">
+            <label>Categoría <input name="categoria" required/></label>
+            <label>Título <input name="titulo" required/></label>
+            <label>Fecha de vencimiento <input type="date" name="fecha_vencimiento" required/></label>
+            <label>URL (opcional) <input name="url" placeholder="/file/:id o http(s)://"/></label>
           </div>
+          <button class="btn" type="submit">Agregar</button>
+        </form>
+
+        <form method="post" action="/admin/doc/upload" enctype="multipart/form-data" style="margin-bottom:8px">
+          <input type="hidden" name="placa" value="<%= placa %>"/>
+          <div class="grid">
+            <label>Categoría <input name="categoria" placeholder="Seguro / Soat / RTV" required/></label>
+            <label>Título <input name="titulo" placeholder="Póliza 2025" required/></label>
+            <label>Fecha de vencimiento <input type="date" name="fecha_vencimiento" required/></label>
+            <label>Imagen <input type="file" name="archivo" accept=".jpg,.jpeg,.png,.webp,.gif" required/></label>
+          </div>
+          <button class="btn" type="submit">Subir documento</button>
+        </form>
+
+        <% if (typeof docs !== 'undefined' && docs && docs.length) { %>
+          <table class="table">
+            <thead>
+              <tr><th>Cat.</th><th>Título</th><th>Vence</th><th>Estado</th><th>Acciones</th></tr>
+            </thead>
+            <tbody>
+              <% docs.forEach(function(d){ %>
+                <tr>
+                  <td><%= d.categoria %></td>
+                  <td><%= d.titulo %></td>
+                  <td><%= d.fecha_vencimiento ? d.fecha_vencimiento : '-' %></td>
+                  <td>
+                    <% if (d.estado === 'vencido') { %>
+                      <span class="badge danger">Vencido</span>
+                    <% } else if (d.estado === 'por-vencer') { %>
+                      <span class="badge warn">Por vencer (<%= d.dias %> d)</span>
+                    <% } else if (d.estado === 'vigente') { %>
+                      <span class="badge ok">Vigente</span>
+                    <% } else { %>
+                      <span class="badge">Sin fecha</span>
+                    <% } %>
+                  </td>
+                  <td>
+                    <form method="post" action="/admin/doc/delete" style="display:inline">
+                      <input type="hidden" name="placa" value="<%= placa %>"/>
+                      <input type="hidden" name="id" value="<%= d.id %>"/>
+                      <button class="btn" type="submit">Eliminar</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }); %>
+            </tbody>
+          </table>
         <% } else { %>
-          <p class="muted">Aún no hay documentos.</p>
+          <p class="muted">Sin documentos.</p>
         <% } %>
       </section>
+
     <% } %>
   </main>
 </body>
