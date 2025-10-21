@@ -105,22 +105,40 @@
         <h4>Imágenes</h4>
         <% if (fotos && fotos.length) { %>
           <div class="gallery">
-            <% fotos.forEach(u => { const name = u.split('/').pop(); }) %>
-            <% for (var i=0;i<fotos.length;i++){ var u=fotos[i]; var name = u.split('/').pop(); %>
-              <div class="fig admin">
-                <img class="responsive" src="<%= u %>" />
-                <div class="row">
-                  <form method="post" action="/admin/photo/cover" style="display:inline">
-                    <input type="hidden" name="placa" value="<%= placa %>"/>
-                    <input type="hidden" name="name" value="<%= name %>"/>
-                    <button class="btn" type="submit">Portada</button>
-                  </form>
-                  <form method="post" action="/admin/photo/delete" style="display:inline">
-                    <input type="hidden" name="placa" value="<%= placa %>"/>
-                    <input type="hidden" name="name" value="<%= name %>"/>
-                    <button class="btn danger" type="submit">Eliminar</button>
-                  </form>
-                </div>
+            <% if (fotos && fotos.length) { %>
+  <div class="gallery" style="margin-top:12px">
+    <% fotos.forEach(function(f){ %>
+      <figure class="fig">
+        <img class="responsive" src="<%= f.url %>"/>
+
+        <!-- Portada -->
+        <form method="post" action="/admin/photo/cover" style="display:flex;gap:6px;padding:8px">
+          <input type="hidden" name="placa" value="<%= placa %>"/>
+          <input type="hidden" name="photo_id" value="<%= f.id %>"/>
+          <button class="btn" type="submit">Portada</button>
+        </form>
+
+        <!-- Eliminar -->
+        <form method="post" action="/admin/photo/delete" style="display:flex;gap:6px;padding:0 8px 8px">
+          <input type="hidden" name="placa" value="<%= placa %>"/>
+          <input type="hidden" name="photo_id" value="<%= f.id %>"/>
+          <button class="btn" type="submit">Eliminar</button>
+        </form>
+
+        <!-- Reemplazar -->
+        <form method="post" action="/admin/photo/replace" enctype="multipart/form-data" style="display:flex;gap:6px;padding:0 8px 12px">
+          <input type="hidden" name="placa" value="<%= placa %>"/>
+          <input type="hidden" name="photo_id" value="<%= f.id %>"/>
+          <input type="file" name="nuevo" accept=".jpg,.jpeg,.png,.webp,.gif" required/>
+          <button class="btn" type="submit">Reemplazar</button>
+        </form>
+      </figure>
+    <% }) %>
+  </div>
+<% } else { %>
+  <p class="muted">Sin imágenes.</p>
+<% } %>
+
                 <div class="row">
                   <form method="post" action="/admin/photo/rename" style="display:flex;gap:6px">
                     <input type="hidden" name="placa" value="<%= placa %>"/>

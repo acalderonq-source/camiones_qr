@@ -279,7 +279,7 @@ async function listPhotosFromDb(placa) {
     'SELECT id FROM photos WHERE placa = ? ORDER BY createdAt DESC',
     [String(placa).toUpperCase()]
   );
-  return rows.map(r => `/file/${r.id}`);
+  return rows.map(r => ({ id: r.id, url: `/file/${r.id}` }));
 }
 async function deletePhotoDbById(id, placa) {
   const [r] = await pool.query('DELETE FROM photos WHERE id = ? AND placa = ?', [id, String(placa).toUpperCase()]);
@@ -305,8 +305,10 @@ app.get('/c/:placa', async (req, res) => {
   try {
     const placa = req.params.placa;
     const truck = await getTruck(placa);
-    let fotos = truck ? await listPhotosFromDb(truck.placa) : [];
-    fotos = fotosSinPortada(fotos, truck?.foto);
+      let fotoObjs = truck ? await listPhotosFromDb(truck.placa) : [];
+      let fotos = fotoObjs.map(x => x.url);
+      fotos = fotosSinPortada(fotos, truck?.foto);
+
 
     let docs = [];
     let avisos = [];
@@ -405,8 +407,12 @@ app.get('/admin/editar', requireAdmin, async (req, res) => {
       } catch (e) { console.error('getTruck:', e.message); truck = { placa, notas: [], documentos: [] }; }
 
       try {
-        fotos = await listPhotosFromDb(placa);
-        fotos = fotosSinPortada(fotos, truck?.foto);
+        const fotoObjs = await listPhotosFromDb(placa);
+// filtra portada solo para mostrar; seguimos teniendo ids
+const urlsSinPortada = fotosSinPortada(fotoObjs.map(f => f.url), truck?.foto);
+// reconstruimos objetos conservando id solo de las visibles
+fotos = fotoObjs.filter(f => urlsSinPortada.includes(f.url));
+
       } catch (e) { console.error('listPhotosFromDb:', e.message); fotos = []; }
 
       try {
@@ -478,15 +484,27 @@ app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req
   }
 });
 
-app.post('/admin/photo/delete', requireAdmin, async (req, res) => {
+app.post('/admin/photo/replace', requireAdmin, upload.single('nuevo'), async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
-  const name  = String(req.body.name  || '').trim(); // puede ser /file/:id
-  const id = getIdFromUrlOrName(name);
-  if (!placa || !id) { setToast(req, 'err', 'Falta placa o id'); return res.redirect('/admin/editar'); }
-  const ok = await deletePhotoDbById(id, placa);
-  setToast(req, ok ? 'ok' : 'err', ok ? 'Imagen eliminada' : 'No encontrada');
+  const pid   = (req.body.photo_id || '').trim() || getIdFromUrlOrName(req.body.name || '');
+  if (!placa || !pid) { setToast(req, 'err', 'Falta placa o id'); return res.redirect('/admin/editar'); }
+  if (!req.file) { setToast(req, 'err', 'No se adjuntó imagen'); return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa)); }
+  const ok = await replacePhotoDbById(pid, placa, req.file);
+  setToast(req, ok ? 'ok' : 'err', ok ? 'Imagen reemplazada' : 'No se pudo reemplazar');
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
+app.post('/admin/photo/cover', requireAdmin, async (req, res) => {
+  const placa = String(req.body.placa || '').trim().toUpperCase();
+  const pid   = (req.body.photo_id || '').trim() || getIdFromUrlOrName(req.body.name || '');
+  if (!placa || !pid) { setToast(req, 'err', 'Falta placa o id'); return res.redirect('/admin/editar'); }
+  const truck = (await getTruck(placa));
+  if (!truck) { setToast(req, 'err', 'No se encontró la placa'); return res.redirect('/admin/editar'); }
+  truck.foto = `/file/${pid}`;
+  await upsertTruck(truck);
+  setToast(req, 'ok', 'Establecida como portada');
+  return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
+});
+
 
 app.post('/admin/photo/replace', requireAdmin, upload.single('nuevo'), async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
