@@ -1,13 +1,11 @@
 // server.js — Camiones QR (Express/EJS/Multer/MySQL BLOB)
-// - Fotos (galería y portada) guardadas en MySQL (tabla photos) como BLOB
-// - Documentos con fecha de vencimiento; imagen del documento también a BLOB
-// - QR anti-localhost, admin con sesión, reportes públicos y panel
-// - Health/debug y cron de avisos 22 días (opcional)
+// - Imágenes (galería/portada/documentos) en MySQL (tabla photos) -> persisten en Render free
+// - QR anti-localhost, admin + editor, documentos con vencimiento, reportes públicos y panel
+// - Health/debug y cron 22 días (opcional)
 
 import express from 'express';
 import session from 'express-session';
 import path from 'path';
-import fs from 'fs';
 import { fileURLToPath } from 'url';
 import multer from 'multer';
 import QRCode from 'qrcode';
@@ -19,7 +17,7 @@ import url from 'url';
 
 dotenv.config();
 
-// ---------- Paths / Express base ----------
+// ---------- Paths / Express ----------
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
@@ -34,14 +32,11 @@ app.use(session({
   resave: false,
   saveUninitialized: false
 }));
-
-// estáticos (CSS, logos, etc.)
 app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------- DB (Railway) ----------
-// ---------- DB (Railway) ----------
 function fromUrl(dbUrl) {
-  const u = new URL(dbUrl);
+  const u = new url.URL(dbUrl);
   return {
     host: u.hostname,
     port: Number(u.port || 3306),
@@ -50,7 +45,6 @@ function fromUrl(dbUrl) {
     database: (u.pathname || '').replace(/^\//, '')
   };
 }
-
 let cfg;
 if (process.env.DATABASE_URL) cfg = fromUrl(process.env.DATABASE_URL);
 else cfg = {
@@ -60,8 +54,6 @@ else cfg = {
   password: process.env.MYSQLPASSWORD,
   database: process.env.MYSQLDATABASE
 };
-
-// SSL para Railway público
 const ssl =
   String(process.env.MYSQL_SSL || 'false') === 'true'
     ? { rejectUnauthorized: false }
@@ -73,13 +65,12 @@ export const pool = mysql.createPool({
   connectionLimit: 10,
   queueLimit: 0,
   ssl,
-  // --- timeouts/keepalive para evitar ETIMEDOUT ---
-  connectTimeout: 20000,       // 20s para conectar
-  acquireTimeout: 20000,       // 20s para sacar conexión del pool
+  // Evitar ETIMEDOUT con Railway/Render free
+  connectTimeout: 20000,
+  acquireTimeout: 20000,
   enableKeepAlive: true,
-  keepAliveInitialDelay: 10000 // 10s
+  keepAliveInitialDelay: 10000
 });
-
 
 // ---------- Mail (opcional) ----------
 let transporter = null;
@@ -95,21 +86,21 @@ if (process.env.SMTP_HOST) {
 // ---------- Helpers ----------
 const ADMIN_PASS = process.env.ADMIN_PASS || 'admin-1234';
 const upload = multer({ storage: multer.memoryStorage() });
+const ALLOWED_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
 
 function absoluteBase(req) {
   const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0];
   const host  = req.headers['x-forwarded-host'] || req.headers.host;
   return `${proto}://${host}`;
 }
-
 function setToast(req, type, msg) { req.session.toast = { type, msg }; }
 function popToast(req) { const t = req.session.toast; req.session.toast = null; return t; }
 function requireAdmin(req, res, next) { if (req.session && req.session.admin) return next(); return res.redirect('/admin/login'); }
 
-const ALLOWED_EXTS = new Set(['.jpg', '.jpeg', '.png', '.webp', '.gif']);
+import pth from 'path';
 function sanitizeName(name) {
-  const ext = (path.extname(name) || '').toLowerCase();
-  const base = path.basename(name, ext).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'img';
+  const ext = (pth.extname(name) || '').toLowerCase();
+  const base = pth.basename(name, ext).replace(/[^a-zA-Z0-9._-]+/g, '_') || 'img';
   return base + ext;
 }
 function getIdFromUrlOrName(name) {
@@ -119,10 +110,14 @@ function getIdFromUrlOrName(name) {
 function fotosSinPortada(fotos, portadaUrl){
   if (!portadaUrl) return fotos;
   const cover = (portadaUrl || '').toLowerCase();
-  return (fotos || []).filter(u => (u || '').toLowerCase() !== cover);
+  // fotos puede ser array de urls o de objetos {id,url}
+  return (fotos || []).filter(x => {
+    const u = typeof x === 'string' ? x : x.url;
+    return (u || '').toLowerCase() !== cover;
+  });
 }
 
-// ---------- Queries / modelos ----------
+// ---------- Schema ----------
 async function ensureSchema() {
   await pool.query(`
     CREATE TABLE IF NOT EXISTS trucks (
@@ -134,11 +129,10 @@ async function ensureSchema() {
       anio   VARCHAR(16) NULL,
       vin    VARCHAR(64) NULL,
       telefono_quejas VARCHAR(64) NULL,
-      foto   VARCHAR(512) NULL, -- aquí guardamos /file/:id
+      foto   VARCHAR(512) NULL, -- /file/:id
       notas  TEXT NULL
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS documents (
       id VARCHAR(32) PRIMARY KEY,
@@ -146,13 +140,12 @@ async function ensureSchema() {
       categoria VARCHAR(64) NOT NULL,
       titulo VARCHAR(128) NOT NULL,
       fecha_vencimiento DATE NULL,
-      url VARCHAR(512) NULL,    -- /file/:id si tiene imagen
+      url VARCHAR(512) NULL, -- /file/:id si hay imagen
       alert22Sent TINYINT(1) NOT NULL DEFAULT 0,
       CONSTRAINT fk_documents_truck FOREIGN KEY (placa)
         REFERENCES trucks(placa) ON DELETE CASCADE ON UPDATE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS reports (
       id VARCHAR(32) PRIMARY KEY,
@@ -166,7 +159,6 @@ async function ensureSchema() {
       INDEX idx_reports_placa_created (placa, createdAt)
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
-
   await pool.query(`
     CREATE TABLE IF NOT EXISTS photos (
       id        VARCHAR(32) PRIMARY KEY,
@@ -180,10 +172,10 @@ async function ensureSchema() {
         REFERENCES trucks(placa) ON DELETE CASCADE ON UPDATE CASCADE
     ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
   `);
-
   console.log('Schema OK');
 }
 
+// ---------- Modelos ----------
 async function getTruck(placa) {
   const [rows] = await pool.query('SELECT * FROM trucks WHERE placa = ?', [String(placa).toUpperCase()]);
   const row = rows[0];
@@ -279,6 +271,7 @@ async function listPhotosFromDb(placa) {
     'SELECT id FROM photos WHERE placa = ? ORDER BY createdAt DESC',
     [String(placa).toUpperCase()]
   );
+  // objetos {id,url}
   return rows.map(r => ({ id: r.id, url: `/file/${r.id}` }));
 }
 async function deletePhotoDbById(id, placa) {
@@ -300,18 +293,17 @@ app.get('/', (req, res) => {
   res.render('index', { toast: popToast(req) });
 });
 
-// ficha pública
 app.get('/c/:placa', async (req, res) => {
   try {
     const placa = req.params.placa;
     const truck = await getTruck(placa);
-      let fotoObjs = truck ? await listPhotosFromDb(truck.placa) : [];
-      let fotos = fotoObjs.map(x => x.url);
-      fotos = fotosSinPortada(fotos, truck?.foto);
 
+    // Fotos para la ficha pública: entregamos solo URLs (sin portada)
+    let fotoObjs = truck ? await listPhotosFromDb(truck.placa) : [];
+    let fotos = fotoObjs.map(x => x.url);
+    fotos = fotosSinPortada(fotos, truck?.foto);
 
-    let docs = [];
-    let avisos = [];
+    let docs = [], avisos = [];
     if (truck) {
       const dbDocs = await getDocsByPlaca(placa);
       docs = dbDocs.map(d => {
@@ -369,22 +361,6 @@ app.get('/qrimg/:placa.png', async (req, res) => {
 });
 app.get('/qr/:placa.png', (req, res) => res.redirect(302, `/qrimg/${encodeURIComponent(req.params.placa)}.png`));
 
-// debug
-app.get('/healthz', (req, res) => res.status(200).send('OK'));
-app.get('/debug/base', (req, res) => {
-  const auto = absoluteBase(req);
-  res.json({ BASE_URL_env: process.env.BASE_URL || null, absoluteBase: auto, finalBase: process.env.BASE_URL || auto });
-});
-app.get('/debug/db', async (req, res) => {
-  try {
-    const [r1] = await pool.query('SELECT 1 AS ok');
-    const [tables] = await pool.query('SHOW TABLES');
-    res.json({ ok: r1?.[0]?.ok === 1, tables });
-  } catch (e) {
-    res.status(500).json({ error: String(e.message || e) });
-  }
-});
-
 // ---------- Admin: login/logout ----------
 app.get('/admin/login', (req, res) => res.render('admin/login', { toast: popToast(req) }));
 app.post('/admin/login', (req, res) => {
@@ -399,35 +375,27 @@ app.get('/admin/editar', requireAdmin, async (req, res) => {
   const placa = (req.query.placa || '').toString().trim().toUpperCase();
   let truck = null, fotos = [], docs = [], avisos = [];
   try {
-    try { avisos = await listAlerts(); } catch (e) { console.error('listAlerts:', e.message); avisos = []; }
+    try { avisos = await listAlerts(); } catch (e) { avisos = []; }
 
     if (placa) {
-      try {
-        truck = (await getTruck(placa)) || { placa, notas: [], documentos: [] };
-      } catch (e) { console.error('getTruck:', e.message); truck = { placa, notas: [], documentos: [] }; }
+      truck = (await getTruck(placa)) || { placa, notas: [], documentos: [] };
 
-      try {
-        const fotoObjs = await listPhotosFromDb(placa);
-// filtra portada solo para mostrar; seguimos teniendo ids
-const urlsSinPortada = fotosSinPortada(fotoObjs.map(f => f.url), truck?.foto);
-// reconstruimos objetos conservando id solo de las visibles
-fotos = fotoObjs.filter(f => urlsSinPortada.includes(f.url));
+      // Obtenemos objetos {id,url} y ocultamos portada solo en la vista
+      const fotoObjs = await listPhotosFromDb(placa);
+      const urlsSinPortada = fotosSinPortada(fotoObjs.map(f => f.url), truck?.foto);
+      fotos = fotoObjs.filter(f => urlsSinPortada.includes(f.url)); // mantiene {id,url}
 
-      } catch (e) { console.error('listPhotosFromDb:', e.message); fotos = []; }
-
-      try {
-        const dbDocs = await getDocsByPlaca(placa);
-        docs = (dbDocs || []).map(d => {
-          const v = d.fecha_vencimiento ? new Date(d.fecha_vencimiento) : null;
-          const today = new Date(); today.setHours(0,0,0,0);
-          let estado = 'sin-fecha', dias = null;
-          if (v && !isNaN(v)) {
-            dias = Math.floor((v - today)/(1000*60*60*24));
-            estado = dias < 0 ? 'vencido' : (dias <= 30 ? 'por-vencer' : 'vigente');
-          }
-          return { ...d, fecha_vencimiento: v ? v.toISOString().slice(0,10) : null, estado, dias };
-        });
-      } catch (e) { console.error('getDocsByPlaca:', e.message); docs = []; }
+      const dbDocs = await getDocsByPlaca(placa);
+      docs = (dbDocs || []).map(d => {
+        const v = d.fecha_vencimiento ? new Date(d.fecha_vencimiento) : null;
+        const today = new Date(); today.setHours(0,0,0,0);
+        let estado = 'sin-fecha', dias = null;
+        if (v && !isNaN(v)) {
+          dias = Math.floor((v - today)/(1000*60*60*24));
+          estado = dias < 0 ? 'vencido' : (dias <= 30 ? 'por-vencer' : 'vigente');
+        }
+        return { ...d, fecha_vencimiento: v ? v.toISOString().slice(0,10) : null, estado, dias };
+      });
     }
   } catch (e) { console.error('admin/editar fatal:', e); }
 
@@ -470,7 +438,7 @@ app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req
     let ok = 0, fail = 0;
     for (const f of req.files) {
       try {
-        const ext = (path.extname(f.originalname) || '.jpg').toLowerCase();
+        const ext = (pth.extname(f.originalname) || '.jpg').toLowerCase();
         if (!ALLOWED_EXTS.has(ext)) { fail++; continue; }
         await savePhotoDb(placa, f);
         ok++;
@@ -484,6 +452,16 @@ app.post('/admin/upload', requireAdmin, upload.array('archivos', 50), async (req
   }
 });
 
+// Usar photo_id en formularios
+app.post('/admin/photo/delete', requireAdmin, async (req, res) => {
+  const placa = String(req.body.placa || '').trim().toUpperCase();
+  const pid   = (req.body.photo_id || '').trim() || getIdFromUrlOrName(req.body.name || '');
+  if (!placa || !pid) { setToast(req, 'err', 'Falta placa o id'); return res.redirect('/admin/editar'); }
+  const ok = await deletePhotoDbById(pid, placa);
+  setToast(req, ok ? 'ok' : 'err', ok ? 'Imagen eliminada' : 'No encontrada');
+  return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
+});
+
 app.post('/admin/photo/replace', requireAdmin, upload.single('nuevo'), async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const pid   = (req.body.photo_id || '').trim() || getIdFromUrlOrName(req.body.name || '');
@@ -493,6 +471,7 @@ app.post('/admin/photo/replace', requireAdmin, upload.single('nuevo'), async (re
   setToast(req, ok ? 'ok' : 'err', ok ? 'Imagen reemplazada' : 'No se pudo reemplazar');
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
+
 app.post('/admin/photo/cover', requireAdmin, async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const pid   = (req.body.photo_id || '').trim() || getIdFromUrlOrName(req.body.name || '');
@@ -505,38 +484,13 @@ app.post('/admin/photo/cover', requireAdmin, async (req, res) => {
   return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-
-app.post('/admin/photo/replace', requireAdmin, upload.single('nuevo'), async (req, res) => {
-  const placa = String(req.body.placa || '').trim().toUpperCase();
-  const name  = String(req.body.name  || '').trim();
-  const id = getIdFromUrlOrName(name);
-  if (!placa || !id) { setToast(req, 'err', 'Falta placa o id'); return res.redirect('/admin/editar'); }
-  if (!req.file) { setToast(req, 'err', 'No se adjuntó imagen'); return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa)); }
-  const ok = await replacePhotoDbById(id, placa, req.file);
-  setToast(req, ok ? 'ok' : 'err', ok ? 'Imagen reemplazada' : 'No se pudo reemplazar');
-  return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
-});
-
-app.post('/admin/photo/cover', requireAdmin, async (req, res) => {
-  const placa = String(req.body.placa || '').trim().toUpperCase();
-  const name  = String(req.body.name  || '').trim();
-  const id = getIdFromUrlOrName(name);
-  if (!placa || !id) { setToast(req, 'err', 'Falta placa o id'); return res.redirect('/admin/editar'); }
-  const truck = (await getTruck(placa));
-  if (!truck) { setToast(req, 'err', 'No se encontró la placa'); return res.redirect('/admin/editar'); }
-  truck.foto = `/file/${id}`;
-  await upsertTruck(truck);
-  setToast(req, 'ok', 'Establecida como portada');
-  return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
-});
-
 app.post('/admin/cover/upload', requireAdmin, upload.single('portada'), async (req,res)=>{
   const placa = String(req.body.placa||'').trim().toUpperCase();
   if (!placa){ setToast(req,'err','Falta placa'); return res.redirect('/admin/editar'); }
   if (!req.file){ setToast(req,'err','Adjunta una imagen'); return res.redirect('/admin/editar?placa='+encodeURIComponent(placa)); }
   const saved = await savePhotoDb(placa, req.file);
   const truck = (await getTruck(placa)) || { placa, notas: [] };
-  truck.foto = saved.url; // /file/:id
+  truck.foto = saved.url;
   await upsertTruck(truck);
   setToast(req,'ok','Portada actualizada');
   return res.redirect('/admin/editar?placa='+encodeURIComponent(placa));
@@ -550,7 +504,7 @@ app.post('/admin/doc/add', requireAdmin, async (req, res) => {
   const categoria = (b.categoria || '').trim();
   const titulo = (b.titulo || '').trim();
   const fecha_vencimiento = (b.fecha_vencimiento || '').trim();
-  const urlDoc = (b.url || '').trim(); // opcional si no hay imagen
+  const urlDoc = (b.url || '').trim();
   if (!categoria || !titulo || !fecha_vencimiento) {
     setToast(req, 'err', 'Completa categoría, título y fecha.');
     return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
@@ -561,7 +515,6 @@ app.post('/admin/doc/add', requireAdmin, async (req, res) => {
   res.redirect('/admin/editar?placa=' + encodeURIComponent(placa));
 });
 
-// Subir imagen y crear documento (imagen a BLOB)
 app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), async (req, res) => {
   const placa = String(req.body.placa || '').trim().toUpperCase();
   const categoria = (req.body.categoria || '').trim() || 'DOC';
@@ -571,10 +524,10 @@ app.post('/admin/doc/upload', requireAdmin, upload.single('archivo'), async (req
   if (!req.file) { setToast(req, 'err', 'Sube una imagen'); return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa)); }
   if (!fecha_vencimiento) { setToast(req, 'err', 'Ingresá la fecha de vencimiento'); return res.redirect('/admin/editar?placa=' + encodeURIComponent(placa)); }
 
-  const ext = (path.extname(req.file.originalname) || '.jpg').toLowerCase();
+  const ext = (pth.extname(req.file.originalname) || '.jpg').toLowerCase();
   if (!ALLOWED_EXTS.has(ext)) { setToast(req,'err','Extensión no permitida'); return res.redirect('/admin/editar?placa='+encodeURIComponent(placa)); }
 
-  const saved = await savePhotoDb(placa, req.file); // /file/:id
+  const saved = await savePhotoDb(placa, req.file);
   const doc = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), categoria, titulo, fecha_vencimiento, url: saved.url, alert22Sent: false };
   await upsertDoc(placa, doc);
   setToast(req, 'ok', 'Documento creado con imagen');
@@ -593,24 +546,19 @@ app.post('/admin/doc/delete', requireAdmin, async (req, res) => {
 // ---------- Reporte público ----------
 app.post('/c/:placa/report', async (req, res) => {
   const placa = String(req.params.placa || '').toUpperCase();
-
   const tipo = (req.body.tipo || 'Otro').trim();
   const nombre = (req.body.nombre || '').trim();
   const telefono = (req.body.telefono || '').trim();
   const email = (req.body.email || '').trim();
   const mensaje = (req.body.mensaje || '').trim();
-
   const empresa = (req.body.empresa || '').trim(); // honeypot
-  if (empresa) return res.redirect(`/c/${encodeURIComponent(placa)}`);
 
-  if (!mensaje || mensaje.length < 3) {
-    return res.redirect(`/c/${encodeURIComponent(placa)}?error=1`);
-  }
+  if (empresa) return res.redirect(`/c/${encodeURIComponent(placa)}`);
+  if (!mensaje || mensaje.length < 3) return res.redirect(`/c/${encodeURIComponent(placa)}?error=1`);
 
   const rep = {
     id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
-    placa, tipo, nombre, telefono, email, mensaje,
-    createdAt: new Date().toISOString()
+    placa, tipo, nombre, telefono, email, mensaje, createdAt: new Date().toISOString()
   };
   await addReport(rep);
 
@@ -661,14 +609,30 @@ app.get('/admin/reportes', requireAdmin, async (req, res) => {
     const [rows] = await pool.query(sql, params);
     res.render('admin/reportes', { placa, reportes: rows, toast: popToast(req) });
   } catch (e) {
-    console.error('admin/reportes:', e.message);
     setToast(req, 'err', 'Error cargando reportes');
     res.render('admin/reportes', { placa: '', reportes: [], toast: popToast(req) });
   }
 });
 
-// ---------- CRON 22 días (opcional) ----------
+// ---------- Health/Debug ----------
+app.get('/healthz', (req, res) => res.status(200).send('OK'));
+app.get('/debug/base', (req, res) => {
+  const auto = absoluteBase(req);
+  res.json({ BASE_URL_env: process.env.BASE_URL || null, absoluteBase: auto, finalBase: process.env.BASE_URL || auto });
+});
+app.get('/debug/db', async (req, res) => {
+  try {
+    const [r1] = await pool.query('SELECT 1 AS ok');
+    const [tables] = await pool.query('SHOW TABLES');
+    res.json({ ok: r1?.[0]?.ok === 1, tables });
+  } catch (e) {
+    res.status(500).json({ error: String(e.message || e) });
+  }
+});
+
+// ---------- CRON (opcional) ----------
 if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
+  // Avisos 22 días
   cron.schedule('0 9 * * *', async () => {
     try {
       const [rows] = await pool.query(
@@ -696,6 +660,11 @@ if (String(process.env.DISABLE_CRON || 'false') !== 'true') {
       }
     } catch (e) { console.error('Cron error:', e.message); }
   }, { timezone: process.env.TZ || 'America/Costa_Rica' });
+
+  // Ping DB cada 2 min para evitar sleep/timeouts
+  cron.schedule('*/2 * * * *', async () => {
+    try { await pool.query('SELECT 1'); } catch (e) { console.log('Ping DB:', e.message); }
+  }, { timezone: process.env.TZ || 'America/Costa_Rica' });
 }
 
 // ---------- Arranque ----------
@@ -704,9 +673,7 @@ async function waitForDb(maxRetries = 20, delayMs = 5000) {
     try {
       const [rows] = await pool.query('SELECT 1 AS ok');
       if (rows?.[0]?.ok === 1) { console.log('DB OK'); return; }
-    } catch (e) {
-      console.log(`DB retry ${i}/${maxRetries}: ${e.message}`);
-    }
+    } catch (e) { console.log(`DB retry ${i}/${maxRetries}: ${e.message}`); }
     await new Promise(r => setTimeout(r, delayMs));
   }
   console.warn('DB no disponible, arrancando igual.');
@@ -721,7 +688,7 @@ function startServer() {
   app.listen(PORT, () => {});
 }
 
-// Middleware de errores para evitar 502 silenciosos
+// Errores globales
 app.use((err, req, res, next) => {
   console.error('Unhandled error middleware:', err);
   if (res.headersSent) return next(err);
@@ -733,7 +700,7 @@ process.on('uncaughtException', err => console.error('uncaughtException:', err))
 (async () => {
   try {
     await waitForDb();
-    await ensureSchema(); // no daña si ya existen
+    await ensureSchema();
     startServer();
   } catch (e) {
     console.error('Fallo al iniciar:', e);
